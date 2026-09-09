@@ -50,6 +50,17 @@ jobs:
       - name: Test
         working-directory: ${{ matrix.working-directory }}
         run: go test -race -count=1 ./...
+      - name: Portal integration test (api only)
+        if: matrix.part == 'api'
+        working-directory: apps/api
+        env:
+          TEST_DATABASE_URL: postgres://openlane_app:openlane_app@localhost:5432/openlane_test?sslmode=disable
+        run: |
+          # migrations + app-role password via owner DSN, then the suite as app role
+          go run github.com/pressly/goose/v3/cmd/goose@v3.22.0 -dir db/migrations postgres "$DATABASE_URL" reset >/dev/null
+          go run github.com/pressly/goose/v3/cmd/goose@v3.22.0 -dir db/migrations postgres "$DATABASE_URL" up >/dev/null
+          PGPASSWORD=openlane psql -h localhost -U openlane -d openlane_test -c "ALTER ROLE openlane_app WITH PASSWORD 'openlane_app';"
+          go test -tags integration -race -count=1 -run TestPortal ./internal/server/
 
   db:
     name: Migrations + RLS
