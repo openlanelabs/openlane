@@ -1,7 +1,7 @@
 # ADR-0003: River for queues in P0, Temporal in P2
 
 - Status: Accepted
-- Date: 2025-09-09
+- Date: 2026-09-09
 
 ## Context
 

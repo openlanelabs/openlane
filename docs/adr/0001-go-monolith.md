@@ -1,7 +1,7 @@
 # ADR-0001: Go modular monolith with Chi, pgx, sqlc
 
 - Status: Accepted
-- Date: 2025-09-09
+- Date: 2026-09-09
 
 ## Context
 
