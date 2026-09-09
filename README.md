@@ -52,11 +52,48 @@ Full detail: the [spec](docs/openlane_spec.md) is the build bible.
 ```bash
 git clone https://github.com/openlanelabs/openlane
 cd openlane
-docker compose up -d
-# → http://localhost:3000
+docker compose up -d          # postgres + redis
+cp .env.example .env          # if present; defaults work locally
+make demo                     # migrate + seed + print a clickable portal URL
 ```
 
-Requirements: Docker. That's it.
+Requirements: Docker, Go 1.22+, Node 20+.
+
+## Try the portal slice in 60 seconds
+
+The first vertical slice (spec §25): a customer opens a magic link, sees
+"Due for you", completes tasks one-tap — with Postgres RLS enforcing that a
+customer can never see another tenant's data or internal-only tasks.
+
+```bash
+make db-up                    # postgres on :55432 (docker compose)
+export DATABASE_URL="postgres://openlane:openlane@localhost:55432/openlane_test?sslmode=disable"
+make demo                     # migrate + seed + print portal URL
+
+# terminal 1 — API
+cd apps/api && OPENLANE_STAFF_TOKEN=dev-token go run ./cmd/api
+
+# terminal 2 — web
+cd apps/web && npm install && npm run dev
+```
+
+`make demo` prints a portal URL like `http://localhost:3000/p/<43-char-token>` —
+open it. You should see **Adobe Onboarding** with **Due for you (3)**, one
+task already **Overdue by 2d**, and none of the three internal tasks.
+Tap **Complete** and watch the progress bar move; the row lands in
+`audit_logs`.
+
+To mint a fresh link (the way real staff would):
+
+```bash
+curl -s -X POST http://localhost:8080/v1/portal-links   -H "Authorization: Bearer dev-token"   -H "X-Workspace-Id: 11111111-1111-1111-1111-111111111111"   -H "Content-Type: application/json"   -d '{"project_id":"55555555-5555-5555-5555-555555555555","contact_id":"44444444-4444-4444-4444-444444444444"}'
+```
+
+The token prints exactly once (SHA-256 stored). Revoking the link makes the
+portal show the friendly "This link has expired" page.
+
+> The demo seed uses a deterministic token so the URL is printable — it is
+> for demos only and must never run against a real database.
 
 ## Roadmap
 
