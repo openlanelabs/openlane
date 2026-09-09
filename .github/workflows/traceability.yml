@@ -20,21 +20,31 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const body = context.payload.pull_request.body || '';
-            const docsOnly = context.payload.pull_request.changed_files > 0 &&
-              context.payload.pull_request.files.every === undefined; // files list needs API call
-            // Fetch changed files
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+
             const files = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
+              pull_number: pr.number,
               per_page: 100,
             });
-            const onlyDocs = files.data.length > 0 &&
-              files.data.every(f => f.filename.startsWith('docs/')) ||
-              files.data.every(f => f.filename === '*.md' && !f.filename.startsWith('.github/'));
+
+            const docsOnly =
+              files.data.length > 0 &&
+              files.data.every(f =>
+                f.filename.startsWith('docs/') ||
+                (!f.filename.includes('/') && f.filename.endsWith('.md'))
+              );
+
+            if (docsOnly) {
+              core.info('Docs-only PR — traceability check skipped.');
+              return;
+            }
+
             const issueLink = /(closes|fixes|resolves|relates to|refs|references)\s+#\d+/i.test(body);
             const ecLink = /EC-[A-Z]+-\d+/i.test(body);
+
             if (!issueLink && !ecLink) {
               core.setFailed(
                 'PR body must link an issue ("Closes #N" / "Relates to #N") or an edge-case ID ' +
