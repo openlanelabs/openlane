@@ -9,3 +9,4 @@ Major decisions are recorded here, one file per decision. New ADRs copy `0000-te
 | 0003 | River (Postgres-backed) for queues in P0; Temporal in P2 | Accepted |
 | 0004 | AGPL-3.0 for core; commercial license for enterprise modules | Accepted |
 | 0005 | OpenAPI 3.1 in `packages/contracts` as source of truth | Accepted |
+| 0006 | Agent attestations + mechanical approval gates (Open Nitro) | Accepted (P2) |
