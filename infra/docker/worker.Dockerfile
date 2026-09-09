@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY apps/worker/ .
 RUN CGO_ENABLED=0 go build -o /bin/worker ./cmd/worker
