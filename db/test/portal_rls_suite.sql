@@ -103,6 +103,47 @@ INSERT INTO test_results
 SELECT 'T5 revoked token sees nothing', count(*) = 0
 FROM tasks WHERE project_id = '55555555-5555-5555-5555-555555555555';
 
+
+-- ---------- T6: templates tenant isolation (issue #35) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO templates (id, workspace_id, name, category, phases) VALUES
+  ('77777777-7777-7777-7777-777777777777', '11111111-1111-1111-1111-111111111111', 'Enterprise Onboarding', 'onboarding',
+   '[{"name":"Kickoff","tasks":[{"title":"Sign SOW","due_offset_days":2,"required":true,"customer_visible":true}]}]');
+INSERT INTO test_results
+SELECT 'T6a template created in tenant', count(*) = 1
+FROM templates WHERE id = '77777777-7777-7777-7777-777777777777';
+
+-- beta tenant cannot see acme's templates
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T6b cross-tenant template invisible', count(*) = 0
+FROM templates WHERE id = '77777777-7777-7777-7777-777777777777';
+
+-- beta cannot insert a template claiming acme's workspace
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO templates (workspace_id, name, category, phases)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'Stolen', 'support', '[]');
+    RAISE EXCEPTION 'T6c FAIL: cross-tenant template insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+INSERT INTO test_results
+SELECT 'T6c cross-tenant insert blocked', count(*) = 0
+FROM templates WHERE name = 'Stolen';
+
+-- no-context sees nothing
+SELECT set_config('app.workspace_id', '', false);
+INSERT INTO test_results
+SELECT 'T6d no-ctx template invisible', count(*) = 0
+FROM templates;
+
+-- restore tenant ctx for cleanliness
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int;
