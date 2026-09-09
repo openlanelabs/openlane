@@ -12,6 +12,185 @@ servers:
   - url: http://localhost:8080/v1
     description: local
 paths:
+  /portal-links:
+    post:
+      summary: Create a portal link for a project contact
+      description: >
+        Internal (staff) only. Generates a 32-byte random token; the DB stores
+        only its SHA-256 hash. Token is returned exactly once at creation.
+      operationId: createPortalLink
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, contact_id]
+              properties:
+                project_id:
+                  type: string
+                  format: uuid
+                contact_id:
+                  type: string
+                  format: uuid
+                expires_in_days:
+                  type: integer
+                  minimum: 1
+                  maximum: 30
+                  default: 7
+      responses:
+        "201":
+          description: Portal link created; token shown exactly once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, project_id, contact_id, token, expires_at]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  project_id:
+                    type: string
+                    format: uuid
+                  contact_id:
+                    type: string
+                    format: uuid
+                  token:
+                    type: string
+                    description: Raw token — shown exactly once, never stored
+                  expires_at:
+                    type: string
+                    format: date-time
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    get:
+      summary: List portal links for a project
+      operationId: listPortalLinks
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Portal links (never includes raw tokens)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PortalLink"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /portal-links/{id}/revoke:
+    post:
+      summary: Revoke a portal link
+      description: Revocation is immediate; the token stops working on the next request.
+      operationId: revokePortalLink
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdPathParam"
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /portal/{token}/session:
+    get:
+      summary: Resolve a portal session
+      description: >
+        Validates the portal token, returns workspace/project/customer context
+        and the contact it belongs to. RLS scope for everything else flows from here.
+      operationId: getPortalSession
+      security:
+        - portalToken: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+            maxLength: 128
+      responses:
+        "200":
+          description: Active session for this token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortalSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /portal/{token}/tasks:
+    get:
+      summary: List customer-visible tasks for the portal session
+      description: >
+        RLS already restricts to the token's project and customer_visible=true
+        rows; the handler is a plain SELECT. EC-PORTAL-07 defense lives in the DB.
+      operationId: listPortalTasks
+      security:
+        - portalToken: []
+      parameters:
+        - $ref: "#/components/parameters/PortalTokenPathParam"
+      responses:
+        "200":
+          description: Customer-visible tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PortalTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /portal/{token}/tasks/{task_id}/complete:
+    post:
+      summary: Mark a customer-visible task complete
+      description: >
+        Sets status=done + completed_at. RLS permits only customer_visible tasks
+        in the token's project; internal tasks return 404 (not 403 — no oracle).
+      operationId: completePortalTask
+      security:
+        - portalToken: []
+      parameters:
+        - $ref: "#/components/parameters/PortalTokenPathParam"
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Task completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortalTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
   /healthz:
     get:
       summary: Liveness probe
@@ -28,7 +207,139 @@ paths:
                   status:
                     type: string
                     enum: [ok]
+
 components:
+  parameters:
+    IdPathParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PortalTokenPathParam:
+      name: token
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 43
+        maxLength: 128
+  responses:
+    BadRequest:
+      description: Malformed request (RFC 9457 problem+json)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Missing, invalid, expired, or revoked credentials
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Resource does not exist or is outside the caller's scope (no oracle)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Gone:
+      description: Portal link revoked or expired
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          description: RFC 9457 problem type URI
+          examples: [https://openlane.dev/errors/portal-token-expired]
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+    PortalLink:
+      type: object
+      required: [id, project_id, contact_id, status, expires_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        contact_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, revoked, expired]
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    PortalSession:
+      type: object
+      required: [project_id, project_name, customer_name, contact_id, contact_name, expires_at]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        project_name:
+          type: string
+        customer_name:
+          type: string
+        contact_id:
+          type: string
+          format: uuid
+        contact_name:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    PortalTask:
+      type: object
+      required: [id, project_id, title, status, customer_visible, due_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          enum: [todo, in_progress, blocked, review, done, waived]
+        customer_visible:
+          type: boolean
+        due_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
   securitySchemes:
     bearerAuth:
       type: http
