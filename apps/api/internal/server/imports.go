@@ -33,7 +33,7 @@ func (s *Server) createImport(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "file required")
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	v, rows := importer.Parse(file, src)
 	if rows == nil { // unknown source / unreadable file — reason in v.Errors
