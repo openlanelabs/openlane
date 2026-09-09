@@ -4,7 +4,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -115,29 +114,6 @@ func workspaceFromCtx(ctx context.Context) string {
 // staff: bearer + X-Workspace-Id. RLS enforces whatever the header claims.
 // ponytail: static bearer = P0 staff auth; the auth slice swaps in real
 // sessions later — handler SQL never changes, only this middleware does.
-func (s *Server) staff() func(http.HandlerFunc) http.Handler {
-	return func(next http.HandlerFunc) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if s.staffToken == "" {
-				problem(w, http.StatusServiceUnavailable, "staff auth not configured")
-				return
-			}
-			var got string
-			if _, err := fmt.Sscanf(r.Header.Get("Authorization"), "Bearer %s", &got); err != nil ||
-				subtle.ConstantTimeCompare([]byte(got), []byte(s.staffToken)) != 1 {
-				problem(w, http.StatusUnauthorized, "invalid staff credentials")
-				return
-			}
-			ws := r.Header.Get("X-Workspace-Id")
-			if ws == "" {
-				problem(w, http.StatusBadRequest, "X-Workspace-Id required")
-				return
-			}
-			next(w, r.WithContext(context.WithValue(r.Context(), wsKey{}, ws)))
-		})
-	}
-}
-
 // portal: validate token shape, open tx, set RLS scope, run handler.
 // Handler returns (status, err): 0 = response written; errQuiet = plain
 // problem(status); anything else = 500 (logged).

@@ -454,13 +454,6 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 type roleKey struct{}
 
-func roleFromCtx(ctx context.Context) string {
-	if v, ok := ctx.Value(roleKey{}).(string); ok {
-		return v
-	}
-	return ""
-}
-
 func (s *Server) staticAllowed() bool {
 	return os.Getenv("OPENLANE_ALLOW_STATIC_TOKEN") == "1" && s.staffToken != ""
 }
