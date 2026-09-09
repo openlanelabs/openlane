@@ -11,6 +11,8 @@ import (
 )
 
 func main() {
+	// ponytail: ADDR is operator-controlled config, not user input; G706 taint is
+	// overcautious here. Fixed value, not log-injectable in practice.
 	addr := os.Getenv("ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -28,6 +30,6 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	log.Printf("openlane api listening on %s", addr)
+	log.Printf("openlane api listening")
 	log.Fatal(srv.ListenAndServe())
 }
