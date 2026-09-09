@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -119,6 +120,26 @@ func (s *Server) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 	var wsID string
 	_ = tx.QueryRow(ctx, `SELECT id FROM workspaces WHERE slug = $1`, req.WorkspaceSlug).Scan(&wsID)
 
+	// §17-2 brute-force throttle: 10/IP/hr, 5/email/hr (§7.4-E2 resend limit).
+	// login_tokens has no RLS — counts work without tenant ctx.
+	ipTries, emailTries := 0, 0
+	ip := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		ip = h // ports churn per connection; throttle the host
+	}
+	_ = tx.QueryRow(ctx, `SELECT count(*) FROM login_tokens
+		WHERE created_ip = $1 AND created_at > now() - interval '1 hour'`, ip).Scan(&ipTries)
+	_ = tx.QueryRow(ctx, `SELECT count(*) FROM login_tokens
+		WHERE email = $1 AND created_at > now() - interval '1 hour'`, req.Email).Scan(&emailTries)
+	if ipTries >= 10 || emailTries >= 5 {
+		w.Header().Set("Retry-After", "3600")
+		problem(w, http.StatusTooManyRequests, "too many login requests — try again later")
+		return
+	}
+
+	// Always mint + store a token (member or not) so probing consumes the
+	// rate-limit buckets identically; non-members' tokens simply never
+	// consume (no membership row to join). No response oracle either way.
 	resp := map[string]any{}
 	if wsID != "" {
 		if _, err := tx.Exec(ctx,
@@ -126,31 +147,43 @@ func (s *Server) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		// is this email a member?
 		var userID string
 		var role string
-		err := tx.QueryRow(ctx, `
+		isMember := tx.QueryRow(ctx, `
 			SELECT m.user_id, m.role FROM memberships m
 			JOIN users u ON u.id = m.user_id
-			WHERE lower(u.email) = lower($1) AND m.workspace_id = $2`, req.Email, wsID).Scan(&userID, &role)
-		if err == nil {
-			tok, err2 := randToken()
-			if err2 == nil {
-				if _, err3 := tx.Exec(ctx, `
-					INSERT INTO login_tokens (email, workspace_id, token_hash, expires_at, created_ip)
-					VALUES ($1, $2, $3, now() + interval '15 minutes', $4)`,
-					req.Email, wsID, hashTok(tok), r.RemoteAddr); err3 == nil {
-					if os.Getenv("OPENLANE_DEV_LOGIN") == "1" {
-						resp["dev_token"] = tok // no SMTP at P0 — the email pillar wires real sending
-					}
-					// ponytail: real email send lands with the notifications pillar; log line stands in
-					fmt.Fprintf(os.Stderr, "MAGIC LINK for %s [%s]: /v1/auth/magic-link/consume?token=%s\n", req.Email, req.WorkspaceSlug, tok)
+			WHERE lower(u.email) = lower($1) AND m.workspace_id = $2`, req.Email, wsID).Scan(&userID, &role) == nil
+
+		tok, err2 := randToken()
+		if err2 == nil {
+			if _, err3 := tx.Exec(ctx, `
+				INSERT INTO login_tokens (email, workspace_id, token_hash, expires_at, created_ip)
+				VALUES ($1, $2, $3, now() + interval '15 minutes', $4)`,
+				req.Email, wsID, hashTok(tok), ip); err3 == nil && isMember {
+				if os.Getenv("OPENLANE_DEV_LOGIN") == "1" {
+					resp["dev_token"] = tok // no SMTP at P0 — the email pillar wires real sending
 				}
+				// ponytail: real email send lands with the notifications pillar; log line stands in
+				fmt.Fprintf(os.Stderr, "MAGIC LINK for %s [%s]: /v1/auth/magic-link/consume?token=%s\n", req.Email, req.WorkspaceSlug, tok)
 			}
 		}
 	}
 	_ = tx.Commit(ctx)
+
+	// Opportunistic housekeeping (~1% of requests): expired login tokens
+	// and long-revoked sessions. ponytail: in-request sweep; a cron/worker
+	// takes over when River lands.
+	if seedRand()%100 == 0 {
+		_, _ = s.pool.Exec(ctx, `DELETE FROM login_tokens WHERE expires_at < now() - interval '1 day'`)
+		_, _ = s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now() - interval '7 days'`)
+	}
 	writeJSON(w, http.StatusAccepted, resp)
+}
+
+func seedRand() int {
+	b := make([]byte, 1)
+	_, _ = rand.Read(b)
+	return int(b[0])
 }
 
 func (s *Server) consumeMagicLink(w http.ResponseWriter, r *http.Request) {
