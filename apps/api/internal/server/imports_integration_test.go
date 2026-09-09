@@ -48,6 +48,8 @@ func importTestStack(t *testing.T) (*httptest.Server, *pgxpool.Pool, *pgxpool.Po
 	pgMust(`ALTER ROLE openlane_app WITH PASSWORD 'openlane_app'`)
 	pgMust(`INSERT INTO workspaces (id, name, slug) VALUES ($1,'Acme SI','acme')`, wsA)
 	pgMust(`INSERT INTO customers (id, workspace_id, name) VALUES ($1, $2, 'Adobe')`, custID, wsA)
+	pgMust(`INSERT INTO contacts (id, workspace_id, customer_id, email, display_name, is_portal_user)
+		VALUES ($1, $2, $3, 'ravi@adobe.test', 'Ravi Kumar', true)`, contactID, wsA, custID)
 	pgMust(`INSERT INTO projects (id, workspace_id, customer_id, name, status) VALUES ($1, $2, $3, 'Imported Project', 'active')`, projA, wsA, custID)
 
 	mux, pool, err := New(ctx, app, staffTok)

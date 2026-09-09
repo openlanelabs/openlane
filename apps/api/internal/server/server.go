@@ -59,6 +59,10 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("GET /v1/templates", staff(s.listTemplates))
 	mux.Handle("GET /v1/templates/{id}", staff(s.getTemplate))
 	mux.Handle("POST /v1/templates/{id}/new-version", staff(s.newTemplateVersion))
+	mux.Handle("GET /v1/projects/{id}/tasks", staff(s.listProjectTasks))
+	mux.Handle("POST /v1/projects/{id}/tasks", staff(s.createTask))
+	mux.Handle("PATCH /v1/tasks/{id}", staff(s.patchTask))
+	mux.Handle("DELETE /v1/tasks/{id}", staff(s.deleteTask))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
