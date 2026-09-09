@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go (${{ matrix.part }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: api
+            working-directory: apps/api
+          - part: worker
+            working-directory: apps/worker
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: openlane
+          POSTGRES_PASSWORD: openlane
+          POSTGRES_DB: openlane_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U openlane"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://openlane:openlane@localhost:5432/openlane_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+          cache-dependency-path: ${{ matrix.working-directory }}/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: ${{ matrix.working-directory }}
+      - name: Test
+        working-directory: ${{ matrix.working-directory }}
+        run: go test -race -count=1 ./...
+
+  db:
+    name: Migrations + RLS
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: openlane
+          POSTGRES_PASSWORD: openlane
+          POSTGRES_DB: openlane_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U openlane"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://openlane:openlane@localhost:5432/openlane_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Apply migrations
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@latest
+          goose -dir db/migrations postgres "$DATABASE_URL" up
+      - name: Verify every table has workspace_id + RLS policy
+        run: |
+          PGPASSWORD=openlane psql -h localhost -U openlane -d openlane_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ DECLARE t record; missing text[];
+          BEGIN
+            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version') LOOP
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=t.tablename AND column_name='workspace_id') THEN
+                missing := array_append(missing, t.tablename || ': no workspace_id');
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename=t.tablename) THEN
+                missing := array_append(missing, t.tablename || ': no RLS policy');
+              END IF;
+            END LOOP;
+            IF array_length(missing,1) > 0 THEN
+              RAISE EXCEPTION 'RLS check failed: %', missing;
+            END IF;
+          END $$;
+          SQL
+
+  contracts:
+    name: OpenAPI contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate OpenAPI 3.1
+        run: |
+          npx --yes @redocly/cli@latest lint packages/contracts/openapi.yaml --format stylish
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: go, javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Build
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm run build

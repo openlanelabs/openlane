@@ -1,0 +1,93 @@
+version: "3.9"
+
+name: openlane
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openlane
+      POSTGRES_PASSWORD: openlane # local only — override for anything real
+      POSTGRES_DB: openlane
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openlane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  vaults3:
+    image: eniz1806/vaults3:latest
+    environment:
+      VAULTS3_ACCESS_KEY: openlane
+      VAULTS3_SECRET_KEY: openlane-secret # local only
+      VAULTS3_DATA_DIR: /data
+      VAULTS3_METADATA_DIR: /metadata
+    ports:
+      - "9000:9000"
+    volumes:
+      - s3data:/data
+      - s3meta:/metadata
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/api.Dockerfile
+    environment:
+      DATABASE_URL: postgres://openlane:openlane@postgres:5432/openlane?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://vaults3:9000
+      S3_ACCESS_KEY: openlane
+      S3_SECRET_KEY: openlane-secret
+      S3_BUCKET: openlane-files
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    environment:
+      DATABASE_URL: postgres://openlane:openlane@postgres:5432/openlane?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://vaults3:9000
+      S3_ACCESS_KEY: openlane
+      S3_SECRET_KEY: openlane-secret
+      S3_BUCKET: openlane-files
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  s3data:
+  s3meta:

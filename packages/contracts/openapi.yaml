@@ -1,0 +1,42 @@
+openapi: 3.1.0
+info:
+  title: OpenLane API
+  version: 0.1.0
+  description: >
+    The OpenLane public API — source of truth (ADR-0005).
+    Every UI action hits this API. Versioned under /v1; breaking changes need /v2.
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.txt
+servers:
+  - url: http://localhost:8080/v1
+    description: local
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    portalToken:
+      type: apiKey
+      in: query
+      name: portal_token
+security:
+  - bearerAuth: []

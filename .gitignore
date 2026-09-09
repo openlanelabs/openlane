@@ -1,0 +1,25 @@
+# Go
+bin/
+*.test
+*.out
+vendor/
+
+# Node
+node_modules/
+.next/
+out/
+
+# Env — never commit these
+.env
+.env.*
+!.env.example
+
+# Local
+*.log
+.DS_Store
+tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
