@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "OpenLane",
   description: "The open-source system of execution for post-sale delivery.",
