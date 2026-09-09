@@ -1,0 +1,53 @@
+name: Traceability
+
+# Sensor: every PR must link an issue (Closes/Fixes/Relates #N) or an
+# edge-case ID (EC-<AREA>-NN) from docs/openlane_spec.md §22.
+# Docs-only PRs are exempt. Spec §25: "Every PR must link EC-IDs it fixes."
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: PR links an issue or EC-ID
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body for traceability link
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+
+            const files = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const docsOnly =
+              files.data.length > 0 &&
+              files.data.every(f =>
+                f.filename.startsWith('docs/') ||
+                (!f.filename.includes('/') && f.filename.endsWith('.md'))
+              );
+
+            if (docsOnly) {
+              core.info('Docs-only PR — traceability check skipped.');
+              return;
+            }
+
+            const issueLink = /(closes|fixes|resolves|relates to|refs|references)\s+#\d+/i.test(body);
+            const ecLink = /EC-[A-Z]+-\d+/i.test(body);
+
+            if (!issueLink && !ecLink) {
+              core.setFailed(
+                'PR body must link an issue ("Closes #N" / "Relates to #N") or an edge-case ID ' +
+                '(EC-<AREA>-NN from docs/openlane_spec.md §22). See CONTRIBUTING.md — link an issue first.'
+              );
+            }
