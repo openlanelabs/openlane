@@ -1,27 +1,32 @@
 // OpenLane API — see docs/openlane_spec.md and docs/adr/.
-//
-// P0 scaffold: health endpoint only. Routes grow from packages/contracts/openapi.yaml.
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/openlanelabs/openlane/apps/api/internal/server"
 )
 
 func main() {
-	// ponytail: ADDR is operator-controlled config, not user input; G706 taint is
-	// overcautious here. Fixed value, not log-injectable in practice.
-	addr := os.Getenv("ADDR")
-	if addr == "" {
-		addr = ":8080"
+	addr, dsn, staffToken := server.ConfigFromEnv()
+	if dsn == "" {
+		log.Fatal("DATABASE_URL is required (must be the openlane_app role, not the owner)")
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	mux, pool, err := server.New(ctx, dsn, staffToken)
+	if err != nil {
+		log.Fatalf("server: %v", err)
+	}
+	defer pool.Close()
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -30,6 +35,14 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	log.Printf("openlane api listening")
-	log.Fatal(srv.ListenAndServe())
+	go func() {
+		log.Printf("openlane api listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(shutdownCtx)
 }
