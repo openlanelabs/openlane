@@ -48,6 +48,7 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("POST /v1/portal-links", staff(s.createPortalLink))
 	mux.Handle("GET /v1/portal-links", staff(s.listPortalLinks))
 	mux.Handle("POST /v1/portal-links/{id}/revoke", staff(s.revokePortalLink))
+	mux.Handle("POST /v1/imports", staff(s.createImport))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))

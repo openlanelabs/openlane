@@ -208,6 +208,77 @@ paths:
                     type: string
                     enum: [ok]
 
+  /v1/imports:
+    post:
+      summary: Import tasks from a competitor CSV (dry-run or commit)
+      description: |
+        Parses an Asana/Rocketlane/generic CSV export into OpenLane tasks.
+        With dry_run=true nothing is written; the response is the full
+        per-row validation report. Without it, valid rows are inserted in
+        one transaction and invalid rows are quarantined in the response.
+      operationId: createImport
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: dry_run
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, source]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                source:
+                  type: string
+                  enum: [asana, rocketlane, generic]
+                project_id:
+                  type: string
+                  format: uuid
+                  description: Existing project to import into (required unless create_project given).
+                create_project:
+                  type: object
+                  properties:
+                    customer_id:
+                      type: string
+                      format: uuid
+                    name:
+                      type: string
+                      minLength: 3
+                      maxLength: 120
+                  required: [customer_id, name]
+      responses:
+        "200":
+          description: Validation report (dry run) or import result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        "400":
+          description: Bad request (unknown source, missing file, no project target)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Target project not found (or out of workspace scope)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 components:
   parameters:
     IdPathParam:
@@ -251,6 +322,29 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    ImportResult:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        source:
+          type: string
+        project_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        ok_count:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              source_row:
+                type: integer
+              reason:
+                type: string
     Problem:
       type: object
       required: [type, title, status]
