@@ -82,8 +82,9 @@ jobs:
         run: |
           PGPASSWORD=openlane psql -h localhost -U openlane -d openlane_test -v ON_ERROR_STOP=1 <<'SQL'
           DO $$ DECLARE t record; missing text[];
+          -- global tables are allowed to skip tenancy columns; everything else must have them
           BEGIN
-            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version') LOOP
+            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version','workspaces','users') LOOP
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=t.tablename AND column_name='workspace_id') THEN
                 missing := array_append(missing, t.tablename || ': no workspace_id');
               END IF;
@@ -131,10 +132,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
       - name: Build
         working-directory: apps/web
         run: |
-          npm ci
+          npm install
           npm run build
