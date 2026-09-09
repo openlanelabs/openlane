@@ -279,6 +279,278 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+  /projects:
+    post:
+      summary: Create a project
+      operationId: createProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id, name]
+              properties:
+                customer_id: {type: string, format: uuid}
+                name: {type: string, minLength: 3, maxLength: 120}
+                status:
+                  type: string
+                  enum: [draft, active]
+                  default: draft
+                start_date: {type: string, format: date}
+                target_go_live: {type: string, format: date}
+                template_id: {type: string, format: uuid, description: Optional — create tasks from template phases}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Project"}
+        "400":
+          description: Validation (name length, start > target, unknown status)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Customer not found (or out of scope)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: List projects (filters)
+      operationId: listProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          schema: {type: string, enum: [draft, active, on_hold, at_risk, delayed, completed, cancelled]}
+        - name: customer_id
+          in: query
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Projects in scope
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Project"}
+        "401":
+          description: Invalid staff credentials
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /projects/{id}:
+    get:
+      summary: Project detail (with computed progress)
+      operationId: getProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Detail
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Project"}
+        "404":
+          description: Not found (or out of workspace scope)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    patch:
+      summary: Update project (status transitions guarded per spec §6.3)
+      operationId: patchProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, minLength: 3, maxLength: 120}
+                status: {type: string, enum: [draft, active, on_hold, at_risk, delayed, completed, cancelled]}
+                start_date: {type: string, format: date}
+                target_go_live: {type: string, format: date}
+                health: {type: string, enum: [green, amber, red, unknown]}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Project"}
+        "400":
+          description: Transition guard failed (e.g. draft→active without start_date; active→completed with open required tasks)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    delete:
+      summary: Soft-delete (archive) a project
+      operationId: deleteProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Archived}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /templates:
+    post:
+      summary: Create a template (v1.0.0)
+      operationId: createTemplate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TemplateInput"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Template"}
+        "400":
+          description: Validation (phases/tasks shape)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "401":
+          description: Invalid staff credentials
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: List templates
+      operationId: listTemplates
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: category
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Template"}
+        "401":
+          description: Invalid staff credentials
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /templates/{id}:
+    get:
+      summary: Template detail
+      operationId: getTemplate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Detail
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Template"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /templates/{id}/new-version:
+    post:
+      summary: Copy template as a new version; the copy becomes the active one
+      operationId: newTemplateVersion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "201":
+          description: New version created (old stays readable)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Template"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   parameters:
     IdPathParam:
@@ -322,6 +594,52 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    Project:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        customer_id: {type: string, format: uuid}
+        name: {type: string}
+        status: {type: string}
+        health: {type: string}
+        start_date: {type: [string, "null"], format: date}
+        target_go_live: {type: [string, "null"], format: date}
+        progress_pct: {type: integer, description: Computed — done+waived / total tasks}
+        created_at: {type: string, format: date-time}
+    TemplateInput:
+      type: object
+      required: [name, category, phases]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        category: {type: string, enum: [onboarding, migration, implementation, support]}
+        phases:
+          type: array
+          items:
+            type: object
+            required: [name, tasks]
+            properties:
+              name: {type: string}
+              tasks:
+                type: array
+                items:
+                  type: object
+                  required: [title]
+                  properties:
+                    title: {type: string, minLength: 1, maxLength: 255}
+                    owner_role: {type: string}
+                    due_offset_days: {type: integer, minimum: 0}
+                    required: {type: boolean, default: true}
+                    customer_visible: {type: boolean, default: false}
+    Template:
+      allOf:
+        - $ref: "#/components/schemas/TemplateInput"
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            version: {type: string}
+            is_active: {type: boolean}
+            usage_count: {type: integer}
+            created_at: {type: string, format: date-time}
     ImportResult:
       type: object
       properties:
