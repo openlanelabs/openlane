@@ -73,11 +73,11 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) — small diffs, API-first, RLS on every
 
 ## Security
 
-Found a vulnerability? **Do not open a public issue.** See [SECURITY.md](SECURITY.md) — security@openlane.dev, 48h acknowledgement.
+Found a vulnerability? **Do not open a public issue.** See [SECURITY.md](SECURITY.md) — security@princedotdev.is-a.bot, 48h acknowledgement.
 
 ## License
 
-Copyright © 2025 OpenLane Labs.
+Copyright © 2026 OpenLane Labs.
 
 - Core: **[AGPL-3.0](LICENSE)** — self-host freely, contribute changes back.
 - Enterprise modules (SSO/SCIM, audit retention, data residency): commercial license.

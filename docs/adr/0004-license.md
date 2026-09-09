@@ -1,7 +1,7 @@
 # ADR-0004: AGPL-3.0 core, commercial enterprise modules
 
 - Status: Accepted
-- Date: 2025-09-09
+- Date: 2026-09-09
 
 ## Context
 

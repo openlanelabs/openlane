@@ -1,7 +1,7 @@
 # ADR-0002: Postgres RLS as the tenancy enforcement layer
 
 - Status: Accepted
-- Date: 2025-09-09
+- Date: 2026-09-09
 
 ## Context
 

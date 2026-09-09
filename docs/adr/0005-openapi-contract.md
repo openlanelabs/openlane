@@ -1,7 +1,7 @@
 # ADR-0005: OpenAPI 3.1 contract as source of truth
 
 - Status: Accepted
-- Date: 2025-09-09
+- Date: 2026-09-09
 
 ## Context
 
