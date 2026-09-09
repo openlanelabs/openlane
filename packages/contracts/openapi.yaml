@@ -551,6 +551,134 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /projects/{id}/tasks:
+    get:
+      summary: List project tasks (staff — includes internal)
+      operationId: listProjectTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/StaffTask"}
+        "404":
+          description: Project not found (or out of scope)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    post:
+      summary: Create a task in the project
+      operationId: createTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TaskInput"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StaffTask"}
+        "400":
+          description: Validation (title length, invalid status)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Project not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /tasks/{id}:
+    patch:
+      summary: Update task (§8.1 state machine enforced)
+      operationId: patchTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/TaskInput"
+                - type: object
+                  properties:
+                    reopen_reason: {type: string, maxLength: 500, description: Required when status moves done→todo}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/StaffTask"}
+        "400":
+          description: Transition guard failed (e.g. done→todo without reason)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Task not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    delete:
+      summary: Soft-delete a task
+      operationId: deleteTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Deleted}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   parameters:
     IdPathParam:
@@ -594,6 +722,25 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    TaskInput:
+      type: object
+      properties:
+        title: {type: string, minLength: 1, maxLength: 255}
+        description_md: {type: string}
+        owner_type: {type: string, enum: [internal, customer, partner, agent]}
+        status: {type: string, enum: [todo, in_progress, blocked, review, done, waived]}
+        due_at: {type: [string, "null"], format: date-time}
+        required: {type: boolean}
+        customer_visible: {type: boolean}
+    StaffTask:
+      allOf:
+        - $ref: "#/components/schemas/TaskInput"
+        - type: object
+          properties:
+            id: {type: string, format: uuid}
+            project_id: {type: string, format: uuid}
+            completed_at: {type: [string, "null"], format: date-time}
+            created_at: {type: string, format: date-time}
     Project:
       type: object
       properties:
