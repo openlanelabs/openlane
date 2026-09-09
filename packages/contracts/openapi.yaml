@@ -711,6 +711,14 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many requests (10/IP/hr, 5/email/hr per §17-2)
+          headers:
+            Retry-After:
+              schema: {type: integer}
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /auth/magic-link/consume:
     get:
       summary: Exchange a magic-link token for session tokens
