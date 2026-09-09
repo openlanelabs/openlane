@@ -198,8 +198,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', 'task.created', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'task.created', 'api', $2)`,
 		t.ID, `{"title":`+jsonString(t.Title)+`}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -306,8 +306,8 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		newVal = `{"reason":` + jsonString(*req.ReopenReason) + `}`
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', $2, 'api', $3)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, $2, 'api', $3)`,
 		id, auditAction, newVal); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -338,8 +338,8 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', 'task.deleted', 'api')`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'task.deleted', 'api')`,
 		r.PathValue("id")); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return

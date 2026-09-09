@@ -55,6 +55,8 @@ jobs:
         working-directory: apps/api
         env:
           TEST_DATABASE_URL: postgres://openlane_app:openlane_app@localhost:5432/openlane_test?sslmode=disable
+          OPENLANE_ALLOW_STATIC_TOKEN: "1"
+          OPENLANE_JWT_SECRET: ci-test-secret
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client > /dev/null
           go run github.com/pressly/goose/v3/cmd/goose@v3.22.0 -dir ../../db/migrations postgres "$DATABASE_URL" up >/dev/null
@@ -105,9 +107,10 @@ jobs:
         run: |
           PGPASSWORD=openlane psql -h localhost -U openlane -d openlane_test -v ON_ERROR_STOP=1 <<'SQL'
           DO $$ DECLARE t record; missing text[];
-          -- global tables are allowed to skip tenancy columns; everything else must have them
+          -- global tables are allowed to skip tenancy columns; system tables
+          -- (exact-hash auth lookups, no tenant predicates — see 00005) skip RLS by design
           BEGIN
-            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version','workspaces','users') LOOP
+            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version','workspaces','users','login_tokens','sessions') LOOP
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=t.tablename AND column_name='workspace_id') THEN
                 missing := array_append(missing, t.tablename || ': no workspace_id');
               END IF;

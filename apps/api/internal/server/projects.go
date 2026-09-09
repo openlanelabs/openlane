@@ -79,8 +79,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -99,8 +99,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', 'project.created', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'project.created', 'api', $2)`,
 		p.ID, `{"name":"`+req.Name+`"}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -121,8 +121,8 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -166,8 +166,8 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -216,8 +216,8 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -303,8 +303,8 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', 'project.updated', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'project.updated', 'api', $2)`,
 		id, `{"status":"`+p.Status+`"}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -325,8 +325,8 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -342,8 +342,8 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', 'project.archived', 'api')`, id); err != nil {
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'project.archived', 'api')`, id); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}

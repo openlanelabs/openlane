@@ -4,7 +4,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -44,25 +43,34 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	staff := s.staff()
-	mux.Handle("POST /v1/portal-links", staff(s.createPortalLink))
-	mux.Handle("GET /v1/portal-links", staff(s.listPortalLinks))
-	mux.Handle("POST /v1/portal-links/{id}/revoke", staff(s.revokePortalLink))
-	mux.Handle("POST /v1/imports", staff(s.createImport))
-	mux.Handle("POST /v1/projects", staff(s.createProject))
-	mux.Handle("GET /v1/projects", staff(s.listProjects))
-	mux.Handle("GET /v1/projects/{id}", staff(s.getProject))
-	mux.Handle("PATCH /v1/projects/{id}", staff(s.patchProject))
-	mux.Handle("DELETE /v1/projects/{id}", staff(s.deleteProject))
-	mux.Handle("POST /v1/projects/from-template", staff(s.createProjectFromTemplate))
-	mux.Handle("POST /v1/templates", staff(s.createTemplate))
-	mux.Handle("GET /v1/templates", staff(s.listTemplates))
-	mux.Handle("GET /v1/templates/{id}", staff(s.getTemplate))
-	mux.Handle("POST /v1/templates/{id}/new-version", staff(s.newTemplateVersion))
-	mux.Handle("GET /v1/projects/{id}/tasks", staff(s.listProjectTasks))
-	mux.Handle("POST /v1/projects/{id}/tasks", staff(s.createTask))
-	mux.Handle("PATCH /v1/tasks/{id}", staff(s.patchTask))
-	mux.Handle("DELETE /v1/tasks/{id}", staff(s.deleteTask))
+	// public auth endpoints
+	mux.HandleFunc("POST /v1/auth/magic-link", s.requestMagicLink)
+	mux.HandleFunc("GET /v1/auth/magic-link/consume", s.consumeMagicLink)
+	mux.HandleFunc("POST /v1/auth/refresh", s.refreshSession)
+	authed := s.auth
+	mux.Handle("POST /v1/auth/logout", authed(s.logout))
+	mux.Handle("GET /v1/auth/me", authed(s.me))
+	mux.Handle("GET /v1/auth/workspaces", authed(s.myWorkspaces))
+
+	// staff routes: JWT (static token only when OPENLANE_ALLOW_STATIC_TOKEN=1)
+	mux.Handle("POST /v1/portal-links", authed(s.createPortalLink))
+	mux.Handle("GET /v1/portal-links", authed(s.listPortalLinks))
+	mux.Handle("POST /v1/portal-links/{id}/revoke", authed(s.revokePortalLink))
+	mux.Handle("POST /v1/imports", authed(s.createImport))
+	mux.Handle("POST /v1/projects", authed(s.createProject))
+	mux.Handle("GET /v1/projects", authed(s.listProjects))
+	mux.Handle("GET /v1/projects/{id}", authed(s.getProject))
+	mux.Handle("PATCH /v1/projects/{id}", authed(s.patchProject))
+	mux.Handle("DELETE /v1/projects/{id}", authed(s.deleteProject))
+	mux.Handle("POST /v1/projects/from-template", authed(s.createProjectFromTemplate))
+	mux.Handle("POST /v1/templates", authed(s.createTemplate))
+	mux.Handle("GET /v1/templates", authed(s.listTemplates))
+	mux.Handle("GET /v1/templates/{id}", authed(s.getTemplate))
+	mux.Handle("POST /v1/templates/{id}/new-version", authed(s.newTemplateVersion))
+	mux.Handle("GET /v1/projects/{id}/tasks", authed(s.listProjectTasks))
+	mux.Handle("POST /v1/projects/{id}/tasks", authed(s.createTask))
+	mux.Handle("PATCH /v1/tasks/{id}", authed(s.patchTask))
+	mux.Handle("DELETE /v1/tasks/{id}", authed(s.deleteTask))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
@@ -106,29 +114,6 @@ func workspaceFromCtx(ctx context.Context) string {
 // staff: bearer + X-Workspace-Id. RLS enforces whatever the header claims.
 // ponytail: static bearer = P0 staff auth; the auth slice swaps in real
 // sessions later — handler SQL never changes, only this middleware does.
-func (s *Server) staff() func(http.HandlerFunc) http.Handler {
-	return func(next http.HandlerFunc) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if s.staffToken == "" {
-				problem(w, http.StatusServiceUnavailable, "staff auth not configured")
-				return
-			}
-			var got string
-			if _, err := fmt.Sscanf(r.Header.Get("Authorization"), "Bearer %s", &got); err != nil ||
-				subtle.ConstantTimeCompare([]byte(got), []byte(s.staffToken)) != 1 {
-				problem(w, http.StatusUnauthorized, "invalid staff credentials")
-				return
-			}
-			ws := r.Header.Get("X-Workspace-Id")
-			if ws == "" {
-				problem(w, http.StatusBadRequest, "X-Workspace-Id required")
-				return
-			}
-			next(w, r.WithContext(context.WithValue(r.Context(), wsKey{}, ws)))
-		})
-	}
-}
-
 // portal: validate token shape, open tx, set RLS scope, run handler.
 // Handler returns (status, err): 0 = response written; errQuiet = plain
 // problem(status); anything else = 500 (logged).

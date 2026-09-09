@@ -50,8 +50,8 @@ func (s *Server) staffTx(r *http.Request) (pgx.Tx, bool) {
 		return nil, false
 	}
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		_ = tx.Rollback(ctx)
 		return nil, false
 	}
@@ -116,8 +116,8 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(r.Context(), `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'template', $1, 'user', 'template.created', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'template', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'template.created', 'api', $2)`,
 		t.ID, `{"version":"`+t.Version+`"}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -220,8 +220,8 @@ func (s *Server) newTemplateVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'template', $1, 'user', 'template.version_created', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'template', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'template.version_created', 'api', $2)`,
 		t.ID, `{"version":"`+t.Version+`","from":"`+src.Version+`"}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -322,8 +322,8 @@ func (s *Server) createProjectFromTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, action, source, new_value)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', 'project.created_from_template', 'api', $2)`,
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'project.created_from_template', 'api', $2)`,
 		p.ID, `{"template_id":"`+tplID+`","template_version_pinned":true}`); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
