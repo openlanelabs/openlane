@@ -44,7 +44,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ matrix.working-directory }}/go.sum
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: ${{ matrix.working-directory }}
       - name: Test
