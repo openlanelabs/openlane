@@ -118,8 +118,8 @@ func (s *Server) createPortalLink(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -172,8 +172,8 @@ func (s *Server) listPortalLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -212,8 +212,8 @@ func (s *Server) revokePortalLink(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true)",
-		workspaceFromCtx(ctx)); err != nil {
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}

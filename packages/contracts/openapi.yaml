@@ -679,6 +679,144 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /auth/magic-link:
+    post:
+      summary: Request a magic-link login token (email + workspace slug)
+      description: >
+        Always returns 202 (never reveal whether the email exists). In dev
+        mode (OPENLANE_DEV_LOGIN=1) the response includes dev_token so
+        flows work without SMTP. Token is single-use, 15 minutes.
+      operationId: requestMagicLink
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, workspace_slug]
+              properties:
+                email: {type: string, format: email}
+                workspace_slug: {type: string}
+      responses:
+        "202":
+          description: Token sent (dev_token included when dev login enabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dev_token: {type: string}
+        "400":
+          description: Malformed request
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /auth/magic-link/consume:
+    get:
+      summary: Exchange a magic-link token for session tokens
+      operationId: consumeMagicLink
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: {type: string, minLength: 43}
+      responses:
+        "200":
+          description: Session issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionTokens"
+        "401":
+          description: Invalid, expired, or already-used token
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /auth/refresh:
+    post:
+      summary: Rotate a refresh token (family theft detection)
+      description: >
+        Refresh tokens rotate on every use. Presenting an already-rotated
+        token revokes the entire family (assumed theft).
+      operationId: refreshSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string, minLength: 43}
+      responses:
+        "200":
+          description: New session tokens
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SessionTokens"}
+        "401":
+          description: Unknown or revoked token (family revoked if reuse)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /auth/logout:
+    post:
+      summary: Revoke the refresh family (bearer auth)
+      operationId: logout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: {type: string, minLength: 43}
+      responses:
+        "204": {description: Logged out}
+        "401":
+          description: Bad token
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /auth/me:
+    get:
+      summary: Current user + workspace + role (bearer auth)
+      operationId: getMe
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Membership context
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Me"}
+        "401":
+          description: Invalid or expired JWT
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /auth/workspaces:
+    get:
+      summary: List workspaces the user belongs to (bearer auth)
+      operationId: listMyWorkspaces
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Memberships
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Me"}
+        "401":
+          description: Invalid JWT
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   parameters:
     IdPathParam:
@@ -722,6 +860,24 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    SessionTokens:
+      type: object
+      properties:
+        access_token: {type: string, description: "JWT, 15 min"}
+        refresh_token: {type: string, minLength: 43}
+        token_type: {type: string, const: Bearer}
+        user_id: {type: string, format: uuid}
+        workspace_id: {type: string, format: uuid}
+        role: {type: string}
+    Me:
+      type: object
+      properties:
+        user_id: {type: string, format: uuid}
+        email: {type: string, format: email}
+        display_name: {type: string}
+        workspace_id: {type: string, format: uuid}
+        workspace_name: {type: string}
+        role: {type: string}
     TaskInput:
       type: object
       properties:

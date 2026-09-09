@@ -70,8 +70,8 @@ make db-up                    # postgres on :55432 (docker compose)
 export DATABASE_URL="postgres://openlane:openlane@localhost:55432/openlane_test?sslmode=disable"
 make demo                     # migrate + seed + print portal URL
 
-# terminal 1 — API
-cd apps/api && OPENLANE_STAFF_TOKEN=dev-token go run ./cmd/api
+# terminal 1 — API (static dev token enabled for the demo)
+cd apps/api && OPENLANE_STAFF_TOKEN=dev-token OPENLANE_ALLOW_STATIC_TOKEN=1 go run ./cmd/api
 
 # terminal 2 — web
 cd apps/web && npm install && npm run dev
