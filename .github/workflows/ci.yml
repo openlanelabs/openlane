@@ -111,7 +111,9 @@ jobs:
           -- global tables are allowed to skip tenancy columns; system tables
           -- (exact-hash auth lookups, no tenant predicates — see 00005) skip RLS by design
           BEGIN
-            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version','workspaces','users','login_tokens','sessions') LOOP
+            FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('goose_db_version','workspaces','users','login_tokens','sessions',
+                    -- river queue infra (ADR-0003): job rows are tenant-agnostic system rows
+                    'river_job','river_queue','river_leader','river_migration','river_notification','river_client','river_client_queue') LOOP
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=t.tablename AND column_name='workspace_id') THEN
                 missing := array_append(missing, t.tablename || ': no workspace_id');
               END IF;

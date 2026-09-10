@@ -253,6 +253,50 @@ SELECT 'T8d no-ctx time invisible', count(*) = 0
 FROM time_entries;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+
+-- ---------- T9: workspace_integrations + sync log (00010) ----------
+INSERT INTO test_results
+SELECT 'T9a no-ctx integrations invisible', count(*) = 0
+FROM workspace_integrations;
+INSERT INTO test_results
+SELECT 'T9b no-ctx sync log invisible', count(*) = 0
+FROM integration_sync_log;
+
+-- staff ctx sees its own rows (seed one row per ws first)
+INSERT INTO workspace_integrations (workspace_id, provider, webhook_secret_enc)
+VALUES ('11111111-1111-1111-1111-111111111111', 'salesforce', '\x00'::bytea);
+INSERT INTO integration_sync_log (workspace_id, provider, external_id)
+VALUES ('11111111-1111-1111-1111-111111111111', 'salesforce', 'test-opp-1');
+
+INSERT INTO test_results
+SELECT 'T9c own-ws integrations visible', count(*) = 1
+FROM workspace_integrations WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T9d cross-ws integrations invisible', count(*) = 0
+FROM workspace_integrations WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+INSERT INTO test_results
+SELECT 'T9e cross-ws sync log invisible', count(*) = 0
+FROM integration_sync_log WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- cross-tenant insert blocked
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO workspace_integrations (workspace_id, provider, webhook_secret_enc)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'salesforce', '\x00'::bytea);
+    RAISE EXCEPTION 'T9f FAIL: cross-tenant integrations insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

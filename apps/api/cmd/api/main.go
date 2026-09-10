@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/openlanelabs/openlane/apps/api/internal/server"
 )
 
@@ -21,6 +22,20 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Dev/e2e bootstrap: with an owner DSN, apply River's schema + grants
+	// here (idempotent). Compose self-hosters don't set this — the migrate
+	// container does it once, owner-only, before the API starts.
+	if admin := os.Getenv("OPENLANE_ADMIN_DATABASE_URL"); admin != "" {
+		ap, err := pgxpool.New(ctx, admin)
+		if err != nil {
+			log.Fatalf("admin pool: %v", err)
+		}
+		if err := server.EnsureRiver(ctx, ap); err != nil {
+			log.Fatalf("ensure river: %v", err)
+		}
+		ap.Close()
+	}
 
 	mux, pool, err := server.New(ctx, dsn, staffToken)
 	if err != nil {

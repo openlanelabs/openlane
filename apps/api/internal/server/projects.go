@@ -88,7 +88,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var p projectOut
 	p, err = scanProject(tx.QueryRow(ctx, `
 		INSERT INTO projects (workspace_id, customer_id, name, status, start_date, target_go_live)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, $1, $2, $3, $4::date, $5::date)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, NULLIF($1,'')::uuid, $2, $3, $4::date, $5::date)
 		RETURNING `+projectInsCols, req.CustomerID, req.Name, req.Status, req.StartDate, req.TargetGoLive))
 	if err != nil {
 		if strings.Contains(err.Error(), "violates") {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 )
 
 // Server holds the pool + staff token; handlers live in portal.go.
@@ -20,7 +21,8 @@ type Server struct {
 	pool       *pgxpool.Pool
 	staffToken string // empty = staff endpoints return 503
 	s3         s3Config
-	http       *http.Client // for S3 HEAD (uploaded-verify); short timeout
+	http       *http.Client          // for S3 HEAD (uploaded-verify); short timeout
+	river      *river.Client[pgx.Tx] // enqueue-only job producer (ADR-0003)
 }
 
 // ConfigFromEnv reads operator config. DATABASE_URL must be the openlane_app
@@ -39,11 +41,17 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	if err != nil {
 		return nil, nil, err
 	}
+	rc, err := newRiverClient(pool)
+	if err != nil {
+		pool.Close()
+		return nil, nil, err
+	}
 	s := &Server{
 		pool:       pool,
 		staffToken: staffToken,
 		s3:         s3ConfigFromEnv(os.Getenv),
 		http:       &http.Client{Timeout: 5 * time.Second},
+		river:      rc,
 	}
 
 	mux := http.NewServeMux()
@@ -99,6 +107,9 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("POST /v1/projects/{id}/time", authed(s.logProjectTime))
 	mux.Handle("GET /v1/projects/{id}/time", authed(s.listProjectTime))
 	mux.Handle("GET /v1/me/time", authed(s.listMyTime))
+	mux.Handle("PUT /v1/integrations/salesforce", authed(s.putSFSettings))
+	mux.Handle("GET /v1/integrations/salesforce", authed(s.getSFSettings))
+	mux.HandleFunc("POST /v1/integrations/salesforce/webhook", s.sfWebhook)
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
