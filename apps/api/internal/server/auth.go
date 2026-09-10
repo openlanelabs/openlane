@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -123,10 +122,7 @@ func (s *Server) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 	// §17-2 brute-force throttle: 10/IP/hr, 5/email/hr (§7.4-E2 resend limit).
 	// login_tokens has no RLS — counts work without tenant ctx.
 	ipTries, emailTries := 0, 0
-	ip := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		ip = h // ports churn per connection; throttle the host
-	}
+	ip := clientIP(r)
 	_ = tx.QueryRow(ctx, `SELECT count(*) FROM login_tokens
 		WHERE created_ip = $1 AND created_at > now() - interval '1 hour'`, ip).Scan(&ipTries)
 	_ = tx.QueryRow(ctx, `SELECT count(*) FROM login_tokens
@@ -254,6 +250,10 @@ func (s *Server) consumeMagicLink(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// web gets httpOnly cookies + CSRF double-submit; the JSON body still
+	// carries both for pure-API clients (issue #56, §17-6)
+	csrf := newCSRFToken()
+	setAuthCookies(w, st.RefreshToken, csrf)
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -262,8 +262,19 @@ func (s *Server) refreshSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
+	viaCookie := false
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || len(req.RefreshToken) < 43 {
-		problem(w, http.StatusBadRequest, "refresh_token required")
+		// fall back to the httpOnly cookie (web path, §17-6)
+		if c, cerr := r.Cookie(refreshCookie); cerr == nil && len(c.Value) >= 43 {
+			req.RefreshToken = c.Value
+			viaCookie = true
+		} else {
+			problem(w, http.StatusBadRequest, "refresh_token required")
+			return
+		}
+	}
+	if !checkCSRF(r, viaCookie) {
+		problem(w, http.StatusForbidden, "CSRF token mismatch")
 		return
 	}
 	ctx := r.Context()
@@ -330,6 +341,9 @@ func (s *Server) refreshSession(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if viaCookie {
+		setAuthCookies(w, st.RefreshToken, newCSRFToken())
+	}
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -337,8 +351,18 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RefreshToken string `json:"refresh_token"`
 	}
+	viaCookie := false
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || len(req.RefreshToken) < 43 {
-		problem(w, http.StatusBadRequest, "refresh_token required")
+		if c, cerr := r.Cookie(refreshCookie); cerr == nil && len(c.Value) >= 43 {
+			req.RefreshToken = c.Value
+			viaCookie = true
+		} else {
+			problem(w, http.StatusBadRequest, "refresh_token required")
+			return
+		}
+	}
+	if !checkCSRF(r, viaCookie) {
+		problem(w, http.StatusForbidden, "CSRF token mismatch")
 		return
 	}
 	ctx := r.Context()
@@ -352,6 +376,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	// revoke whole family on explicit logout (belt and braces)
 	_, _ = s.pool.Exec(ctx, `UPDATE sessions SET revoked_at = now()
 		WHERE family_id = (SELECT family_id FROM sessions WHERE refresh_hash = $1) AND revoked_at IS NULL`, hashTok(req.RefreshToken))
+	clearAuthCookies(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 

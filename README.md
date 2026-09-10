@@ -120,6 +120,28 @@ make restore FILE=backups/openlane-<timestamp>.dump
 > `openlane-pg` container on port **55432**; `docker compose up` runs the
 > full stack on standard ports. Two intentional setups, one repo.
 
+## Production configuration
+
+Set `OPENLANE_ENV=production` and the server **refuses to boot** with any
+dev escape hatch active:
+
+| Env var | Production requirement |
+|---|---|
+| `OPENLANE_JWT_SECRET` | required, real secret (not the dev fallback) |
+| `OPENLANE_ALLOW_STATIC_TOKEN` | must be unset/0 (CI-only hatch) |
+| `OPENLANE_DEV_LOGIN` | must be unset/0 (dev tokens) |
+| `OPENLANE_SLACK_ALLOW_ANY` | must be unset/0 (webhook allowlist) |
+| `OPENLANE_TRUST_PROXY` | set `1` **only** behind a proxy you control |
+
+`OPENLANE_TRUST_PROXY=1` makes login throttles key on the last
+`X-Forwarded-For` hop instead of the proxy IP — without it every request
+shares one 10/hr budget behind a proxy. With it, a client-spoofed prefix
+just throttles the address your proxy reported.
+
+Sessions support two transports: JSON body tokens (API clients) and
+httpOnly cookies (`openlane_refresh` + double-submit `openlane_csrf`,
+header `X-OpenLane-CSRF` on cookie-authenticated refresh/logout).
+
 ## Roadmap
 
 - [ ] **P0 — MVP**: projects + templates + portal magic-link + tasks + docs/files/forms + time + notifications

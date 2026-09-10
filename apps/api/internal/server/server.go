@@ -37,6 +37,10 @@ func ConfigFromEnv() (addr, dsn, staffToken string) {
 
 // New builds the mux; caller closes the pool.
 func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.Pool, error) {
+	// fail closed: prod profile refuses to boot with dev escape hatches
+	if err := validateProdConfig(); err != nil {
+		return nil, nil, err
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, nil, err
@@ -71,7 +75,7 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.HandleFunc("GET /v1/auth/magic-link/consume", s.consumeMagicLink)
 	mux.HandleFunc("POST /v1/auth/refresh", s.refreshSession)
 	authed := s.auth
-	mux.Handle("POST /v1/auth/logout", authed(s.logout))
+	mux.HandleFunc("POST /v1/auth/logout", s.logout)
 	mux.Handle("GET /v1/auth/me", authed(s.me))
 	mux.Handle("GET /v1/auth/workspaces", authed(s.myWorkspaces))
 
