@@ -61,7 +61,13 @@ func requestLog(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-Id", reqID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		log.Printf("req=%s method=%s path=%s status=%d dur=%dms",
+		// A request logger logs request data by definition — a %0A in a
+		// URL path splits the raw %s line (confirmed with a live probe),
+		// i.e. real log injection. %q (strconv.Quote) escapes CR/LF so the
+		// line cannot split; gosec's taint model can't see through verb
+		// changes, hence the narrow, justified annotation — the sanitization
+		// is the verb, verified by test below.
+		log.Printf("req=%s method=%q path=%q status=%d dur=%dms", // #nosec G706 -- %q escapes CR/LF; verified by TestRequestLogQuotesPath
 			reqID, r.Method, r.URL.Path, rec.status, time.Since(start).Milliseconds())
 	})
 }
