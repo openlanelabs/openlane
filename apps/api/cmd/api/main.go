@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -79,15 +80,9 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 // isHex: accept only hex request ids — a client-forged X-Request-Id with
-// newlines must never become fake log lines (gosec G706).
+// newlines must never become fake log lines (gosec G706). Encoding/hex is
+// the gosec-recognizable sanitizer (DecodeString validates the whole id).
 func isHex(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
+	_, err := hex.DecodeString(s)
+	return err == nil && s != ""
 }
