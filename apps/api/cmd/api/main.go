@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -55,12 +54,10 @@ func main() {
 func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		// hex-only: a client-forged X-Request-Id must not become fake log
-		// lines (gosec G706 log injection) — regenerate on anything else
-		reqID := r.Header.Get("X-Request-Id")
-		if !isHex(reqID) || len(reqID) > 64 {
-			reqID = fmt.Sprintf("%x", time.Now().UnixNano())
-		}
+		// request ids are always server-generated — a client-forged
+		// X-Request-Id never reaches the log stream (gosec G706). Ingress
+		// correlates via its own access logs.
+		reqID := fmt.Sprintf("%x", time.Now().UnixNano())
 		w.Header().Set("X-Request-Id", reqID)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
@@ -77,12 +74,4 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
-}
-
-// isHex: accept only hex request ids — a client-forged X-Request-Id with
-// newlines must never become fake log lines (gosec G706). Encoding/hex is
-// the gosec-recognizable sanitizer (DecodeString validates the whole id).
-func isHex(s string) bool {
-	_, err := hex.DecodeString(s)
-	return err == nil && s != ""
 }
