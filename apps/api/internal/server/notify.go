@@ -56,7 +56,7 @@ func (s *Server) notifyEvent(ctx context.Context, workspaceID, event, text strin
 		       COALESCE($2::text = 'task.completed' AND notify_task_completed
 		            OR $2::text = 'project.created' AND notify_project_created
 		            OR $2::text = 'project.created_from_template' AND notify_project_created
-		            OR $2::text IN ('approval.requested','approval.decided') AND notify_approvals, false)
+		            OR $2::text IN ('approval.requested','approval.decided','csat.submitted') AND notify_approvals, false)
 		FROM workspace_settings WHERE workspace_id = $1`, workspaceID, event).Scan(&url, &enabled)
 	if err != nil || !enabled || url == "" {
 		return

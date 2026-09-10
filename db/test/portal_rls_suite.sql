@@ -348,6 +348,79 @@ SELECT 'T10f no-ctx approval invisible', count(*) = 0
 FROM approvals;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T11: csat (00012) ----------
+-- staff decide the linked approval first (CSAT rides decided approvals)
+UPDATE approvals SET status = 'approved', decided_at = now()
+WHERE project_id = '55555555-5555-5555-5555-555555555555';
+
+-- own-ws csat visible (seed one under staff ctx)
+INSERT INTO csat_responses (workspace_id, approval_id, project_id, contact_id, score, comment)
+VALUES ('11111111-1111-1111-1111-111111111111',
+        (SELECT id FROM approvals WHERE project_id = '55555555-5555-5555-5555-555555555555'),
+        '55555555-5555-5555-5555-555555555555', '44444444-4444-4444-4444-444444444444', 5, 'great');
+INSERT INTO test_results
+SELECT 'T11a own-ws csat visible', count(*) = 1
+FROM csat_responses WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T11b cross-tenant csat invisible', count(*) = 0
+FROM csat_responses WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal ctx: insert allowed for own link (decided approval, matching contact)
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+DO $check$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO csat_responses (workspace_id, approval_id, project_id, contact_id, score)
+  VALUES ('11111111-1111-1111-1111-111111111111',
+          (SELECT id FROM approvals WHERE project_id = '66666666-6666-6666-6666-666666666666'),
+          '66666666-6666-6666-6666-666666666666', '44444444-4444-4444-4444-444444444444', 3)
+  RETURNING id INTO v_id;
+  RAISE EXCEPTION 'T11c FAIL: portal csat insert for UNLINKED project NOT blocked';
+EXCEPTION
+  WHEN insufficient_privilege THEN NULL;
+END
+$check$;
+
+-- unique: second response for same approval rejected
+DO $check$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO csat_responses (workspace_id, approval_id, project_id, contact_id, score)
+  VALUES ('11111111-1111-1111-1111-111111111111',
+          (SELECT id FROM approvals WHERE project_id = '55555555-5555-5555-5555-555555555555'),
+          '55555555-5555-5555-5555-555555555555', '44444444-4444-4444-4444-444444444444', 4);
+  RAISE EXCEPTION 'T11d FAIL: duplicate csat for one approval NOT blocked';
+EXCEPTION
+  WHEN unique_violation THEN NULL;
+END
+$check$;
+
+-- escalation fn: creates one open task; second call for same project skipped;
+-- wrong-project returns NULL. Run under portal ctx (SECURITY DEFINER).
+DO $check$
+DECLARE v1 uuid; v2 uuid;
+BEGIN
+  SELECT csat_escalate('55555555-5555-5555-5555-555555555555'::uuid, 2::smallint, 'upset') INTO v1;
+  IF v1 IS NULL THEN RAISE EXCEPTION 'T11e FAIL: csat_escalate returned NULL on first call'; END IF;
+  SELECT csat_escalate('55555555-5555-5555-5555-555555555555'::uuid, 2::smallint, 'more upset') INTO v2;
+  IF v2 IS NOT NULL THEN RAISE EXCEPTION 'T11f FAIL: second escalation NOT deduped'; END IF;
+  SELECT csat_escalate('99999999-9999-9999-9999-999999999999'::uuid, 2::smallint, 'ghost') INTO v2;
+  IF v2 IS NOT NULL THEN RAISE EXCEPTION 'T11g FAIL: ghost project escalation NOT NULL'; END IF;
+END
+$check$;
+
+-- no-context sees nothing
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO test_results
+SELECT 'T11h no-ctx csat invisible', count(*) = 0
+FROM csat_responses;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

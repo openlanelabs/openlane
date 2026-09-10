@@ -1333,6 +1333,96 @@ paths:
                 items:
                   $ref: "#/components/schemas/Approval"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /portal/{token}/csat:
+    post:
+      summary: Portal — 1-click CSAT rating (§7.4, §14)
+      description: >
+        One response per approval, asked right after the customer decides.
+        Score 1-5 (😞 to 😄) + optional comment. Undecided, foreign, or
+        already-rated approvals all 404 — no oracle. Score <3 auto-opens
+        an escalation task for the team (deduped per project).
+      operationId: submitPortalCSAT
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approval_id, score]
+              properties:
+                approval_id:
+                  type: string
+                  format: uuid
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comment:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Rating recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  score:
+                    type: integer
+                  emoji:
+                    type: string
+                  escalated:
+                    type: boolean
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/csat:
+    get:
+      summary: Staff — CSAT responses, average, response rate, trend (§14)
+      description: >
+        Response rate = responses / decided approvals — survivorship bias
+        guard (§14 edge). Trend = last 5 responses, chronological.
+      operationId: listProjectCSAT
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: CSAT stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  responses:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CSATResponse"
+                  average_score:
+                    type: number
+                    description: null when no responses yet
+                    example: 4.3
+                  response_rate:
+                    type: number
+                    example: 0.75
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /approvals/{id}/reopen:
     post:
       summary: Reopen a decided approval (new round)
@@ -1571,6 +1661,28 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    CSATResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        approval_id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+        emoji:
+          type: string
+        created_at:
+          type: string
     Approval:
       type: object
       properties:
