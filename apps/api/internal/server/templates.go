@@ -332,6 +332,8 @@ func (s *Server) createProjectFromTemplate(w http.ResponseWriter, r *http.Reques
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.notifyEvent(ctx, workspaceFromCtx(ctx), "project.created_from_template",
+		"🚀 Project created from template: "+p.Name)
 	writeJSON(w, http.StatusCreated, p)
 }
 

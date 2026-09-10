@@ -71,6 +71,9 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("POST /v1/projects/{id}/tasks", authed(s.createTask))
 	mux.Handle("PATCH /v1/tasks/{id}", authed(s.patchTask))
 	mux.Handle("DELETE /v1/tasks/{id}", authed(s.deleteTask))
+	mux.Handle("PUT /v1/settings/slack", authed(s.putSlackSettings))
+	mux.Handle("GET /v1/settings/slack", authed(s.getSlackSettings))
+	mux.Handle("DELETE /v1/settings/slack", authed(s.deleteSlackSettings))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
@@ -175,12 +178,15 @@ func sessionFromCtx(ctx context.Context) portalSessionOut {
 	return portalSessionOut{}
 }
 
+func sessionWorkspaceFromCtx(ctx context.Context) string {
+	return sessionFromCtx(ctx).WorkspaceID
+}
+
 // resolvePortalSession returns nil (not error) when the token has no live link.
 func resolvePortalSession(ctx context.Context, tx pgx.Tx, tokenHash string) (*portalSessionOut, error) {
 	var out portalSessionOut
-	var wsID string
 	err := tx.QueryRow(ctx, `SELECT * FROM portal_session($1)`, tokenHash).
-		Scan(&wsID, &out.ProjectID, &out.ProjectName, &out.CustomerName, &out.ContactID, &out.ContactName, &out.ExpiresAt)
+		Scan(&out.WorkspaceID, &out.ProjectID, &out.ProjectName, &out.CustomerName, &out.ContactID, &out.ContactName, &out.ExpiresAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}

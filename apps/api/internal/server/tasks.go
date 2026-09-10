@@ -316,6 +316,10 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if t.Status == "done" && cur.Status != "done" {
+		s.notifyEvent(ctx, workspaceFromCtx(ctx), "task.completed",
+			"✅ Task completed: "+t.Title)
+	}
 	writeJSON(w, http.StatusOK, t)
 }
 

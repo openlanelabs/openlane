@@ -825,6 +825,72 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /settings/slack:
+    put:
+      summary: Configure the workspace Slack webhook
+      description: >
+        Allowlisted to hooks.slack.com and *.slack.com/services/ URLs only —
+        arbitrary hosts are rejected (SSRF guard, spec §17-5). Delivery is
+        best-effort fire-and-forget on enabled events.
+      operationId: putSlackSettings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [webhook_url]
+              properties:
+                webhook_url: {type: string, format: uri}
+                notify_task_completed: {type: boolean, default: true}
+                notify_project_created: {type: boolean, default: true}
+      responses:
+        "204": {description: Saved}
+        "400":
+          description: URL not on the Slack allowlist
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: Slack settings status
+      operationId: getSlackSettings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Status (URL itself is never echoed back)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: {type: boolean}
+                  notify_task_completed: {type: boolean}
+                  notify_project_created: {type: boolean}
+    delete:
+      summary: Clear the Slack webhook
+      operationId: deleteSlackSettings
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Cleared}
 components:
   parameters:
     IdPathParam:
