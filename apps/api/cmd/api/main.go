@@ -54,8 +54,10 @@ func main() {
 func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		// hex-only: a client-forged X-Request-Id must not become fake log
+		// lines (gosec G706 log injection) — regenerate on anything else
 		reqID := r.Header.Get("X-Request-Id")
-		if reqID == "" {
+		if !isHex(reqID) || len(reqID) > 64 {
 			reqID = fmt.Sprintf("%x", time.Now().UnixNano())
 		}
 		w.Header().Set("X-Request-Id", reqID)
@@ -74,4 +76,18 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// isHex: accept only hex request ids — a client-forged X-Request-Id with
+// newlines must never become fake log lines (gosec G706).
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
