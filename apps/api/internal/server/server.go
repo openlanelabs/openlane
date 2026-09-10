@@ -95,6 +95,10 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("GET /v1/projects/{id}/files", authed(s.listProjectFiles))
 	mux.Handle("DELETE /v1/files/{id}", authed(s.deleteFile))
 	mux.Handle("GET /v1/files/{id}/url", authed(s.fileDownloadURL))
+	mux.Handle("POST /v1/tasks/{id}/time", authed(s.logTaskTime))
+	mux.Handle("POST /v1/projects/{id}/time", authed(s.logProjectTime))
+	mux.Handle("GET /v1/projects/{id}/time", authed(s.listProjectTime))
+	mux.Handle("GET /v1/me/time", authed(s.listMyTime))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))

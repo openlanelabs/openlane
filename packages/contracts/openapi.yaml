@@ -1014,6 +1014,149 @@ paths:
                   expires_in:
                     type: string
         "404": { $ref: "#/components/responses/NotFound" }
+  /tasks/{id}/time:
+    post:
+      summary: Log time on a task
+      operationId: logTaskTime
+      description: |
+        Policies (spec section 11): positive interval, <=12h (v1 rejects
+        longer - overtime flag comes with P1 approvals), ended_at not in
+        the future, no more than 7 days back. Requires a user identity
+        (JWT) - anonymous system actors cannot log time.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [started_at, ended_at]
+              properties:
+                started_at:
+                  type: string
+                  format: date-time
+                ended_at:
+                  type: string
+                  format: date-time
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Logged (draft)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/time:
+    post:
+      summary: Log project-level time (taskless)
+      operationId: logProjectTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [started_at, ended_at]
+              properties:
+                started_at:
+                  type: string
+                  format: date-time
+                ended_at:
+                  type: string
+                  format: date-time
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "201":
+          description: Logged (draft)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimeEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: List project time entries
+      operationId: listProjectTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: "Entries (default range: last 7 days)"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeEntry"
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /me/time:
+    get:
+      summary: The caller's time entries (all projects)
+      operationId: listMyTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: "Entries (default range: last 7 days)"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeEntry"
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /settings/slack:
     put:
       summary: Configure the workspace Slack webhook
@@ -1152,6 +1295,31 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    TimeEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        minutes:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+        note:
+          type: string
+        status:
+          type: string
+          enum: [draft, submitted, approved, rejected]
     SessionTokens:
       type: object
       properties:
