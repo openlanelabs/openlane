@@ -42,6 +42,13 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.pool.Ping(r.Context()); err != nil {
+			problem(w, http.StatusServiceUnavailable, "db unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	})
 
 	// public auth endpoints
 	mux.HandleFunc("POST /v1/auth/magic-link", s.requestMagicLink)

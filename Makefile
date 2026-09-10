@@ -7,7 +7,7 @@ WEB_URL ?= http://localhost:3000
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev api worker web check lint test e2e db-up db-down db-migrate db-reset db-seed demo fmt build
+.PHONY: help dev api worker web check lint test e2e db-up db-down db-migrate db-reset db-seed demo fmt build backup restore
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -74,3 +74,12 @@ fmt: ## gofmt + organize imports
 build: ## Build release binaries
 	CGO_ENABLED=0 go build -o bin/api ./apps/api/cmd/api
 	CGO_ENABLED=0 go build -o bin/worker ./apps/worker/cmd/worker
+
+backup: ## pg_dump the local DB to ./backups (timestamped, custom format)
+	mkdir -p backups
+	pg_dump -Fc -f "backups/openlane-$$(date +%Y%m%d-%H%M%S).dump" "$(DATABASE_URL)"
+	@echo "backup written to backups/ (restore with: make restore FILE=<name>)"
+
+restore: ## Restore a backup: make restore FILE=backups/openlane-<ts>.dump
+	pg_restore --clean --if-exists -d "$(DATABASE_URL)" "$(FILE)"
+	@echo "restored from $(FILE)"

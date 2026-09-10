@@ -95,6 +95,31 @@ portal show the friendly "This link has expired" page.
 > The demo seed uses a deterministic token so the URL is printable — it is
 > for demos only and must never run against a real database.
 
+## Self-hosting (Docker Compose)
+
+```bash
+docker compose up -d
+```
+
+The stack: postgres (+ auto-created `openlane_app` role) →
+**migrate** (goose, runs as owner, exits) → api + worker
+(**connect as `openlane_app` — RLS applies**, ADR-0002) → web.
+Health: `GET /healthz` (liveness) and `GET /readyz` (DB roundtrip).
+
+Every request logs one line — `req=<id> method path status dur_ms` —
+and echoes `X-Request-Id`.
+
+Backups / restore (local DB):
+
+```bash
+make backup                     # pg_dump -Fc to ./backups/<timestamp>.dump
+make restore FILE=backups/openlane-<timestamp>.dump
+```
+
+> Local dev note: `make demo` and the integration tests use the
+> `openlane-pg` container on port **55432**; `docker compose up` runs the
+> full stack on standard ports. Two intentional setups, one repo.
+
 ## Roadmap
 
 - [ ] **P0 — MVP**: projects + templates + portal magic-link + tasks + docs/files/forms + time + notifications
