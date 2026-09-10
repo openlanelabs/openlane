@@ -1387,6 +1387,174 @@ paths:
                     type: boolean
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/forms:
+    post:
+      summary: Staff — create a form (required fields enforced at submit)
+      operationId: createForm
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, fields]
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                published:
+                  type: boolean
+                fields:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/FormFields"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Form"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: Staff — list project forms
+      operationId: listProjectForms
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Forms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Form"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /forms/{id}/responses.csv:
+    get:
+      summary: Staff — export responses as CSV (§9)
+      operationId: exportFormResponsesCSV
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: CSV — one row per response, columns per field key
+          content:
+            text/csv:
+              schema:
+                type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /portal/{token}/forms:
+    get:
+      summary: Portal — published forms to fill
+      operationId: listPortalForms
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+      responses:
+        "200":
+          description: Published forms (fields to render)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    description:
+                      type: string
+                    fields:
+                      type: array
+                      items:
+                        $ref: "#/components/schemas/FormFields"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "410": { description: Link expired or revoked }
+  /portal/{token}/forms/{id}/submit:
+    post:
+      summary: Portal — submit a form response (once per contact)
+      description: >
+        Required fields are enforced server-side: a missing required
+        field 400s naming the field. Unknown keys are stripped, date
+        fields must be YYYY-MM-DD. Resubmitting or a foreign form id
+        both 404 — no oracle.
+      operationId: submitPortalForm
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        "201":
+          description: Submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /projects/{id}/docs:
     post:
       summary: Staff — create a project doc (version 1)
@@ -1858,6 +2026,39 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    Form:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/FormFields"
+        published:
+          type: boolean
+    FormFields:
+      type: object
+      required: [key, type]
+      properties:
+        key:
+          type: string
+          description: snake_case answer key
+        label:
+          type: string
+        type:
+          type: string
+          enum: [text, date, file]
+        required:
+          type: boolean
     Doc:
       type: object
       properties:

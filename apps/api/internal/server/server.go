@@ -110,6 +110,9 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("POST /v1/projects/{id}/approvals", authed(s.createApproval))
 	mux.Handle("GET /v1/projects/{id}/approvals", authed(s.listProjectApprovals))
 	mux.Handle("POST /v1/approvals/{id}/reopen", authed(s.reopenApproval))
+	mux.Handle("POST /v1/projects/{id}/forms", authed(s.createForm))
+	mux.Handle("GET /v1/projects/{id}/forms", authed(s.listProjectForms))
+	mux.Handle("GET /v1/forms/{id}/responses.csv", authed(s.exportFormResponsesCSV))
 	mux.Handle("POST /v1/projects/{id}/docs", authed(s.createDoc))
 	mux.Handle("GET /v1/projects/{id}/docs", authed(s.listProjectDocs))
 	mux.Handle("GET /v1/docs/{id}", authed(s.getDoc))
@@ -132,6 +135,8 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.HandleFunc("POST /v1/portal/{token}/approvals/{id}/decide", s.portal(s.decidePortalApproval))
 	mux.HandleFunc("POST /v1/portal/{token}/csat", s.portal(s.submitPortalCSAT))
 	mux.HandleFunc("GET /v1/portal/{token}/docs", s.portal(s.listPortalDocs))
+	mux.HandleFunc("GET /v1/portal/{token}/forms", s.portal(s.listPortalForms))
+	mux.HandleFunc("POST /v1/portal/{token}/forms/{id}/submit", s.portal(s.submitPortalForm))
 	mux.HandleFunc("GET /v1/portal/{token}/files/{file_id}/url", s.portal(s.portalFileURL))
 
 	return mux, pool, nil

@@ -474,6 +474,78 @@ SELECT 'T12f no-ctx docs invisible', count(*) = 0
 FROM docs;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T13: forms (00014) ----------
+-- staff seed: published form on 5555, unpublished on 5555, published on unlinked 6666
+INSERT INTO forms (workspace_id, project_id, title, fields, published)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'Onboarding intake',
+   '[{"key":"company_size","label":"Company size","type":"text","required":true}]'::jsonb, true),
+  ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'Draft form', '[]'::jsonb, false),
+  ('11111111-1111-1111-1111-111111111111', '66666666-6666-6666-6666-666666666666', 'Other project form', '[]'::jsonb, true);
+INSERT INTO form_responses (workspace_id, form_id, contact_id, answers)
+SELECT '11111111-1111-1111-1111-111111111111', f.id, '44444444-4444-4444-4444-444444444444',
+       '{"company_size":"500"}'::jsonb
+FROM forms f WHERE f.title = 'Onboarding intake';
+
+INSERT INTO test_results
+SELECT 'T13a own-ws forms visible', count(*) = 3
+FROM forms WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T13b cross-tenant forms invisible', count(*) = 0
+FROM forms WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal: sees ONLY the published linked form
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T13c portal sees published linked form', count(*) = 1
+FROM forms WHERE published;
+
+-- portal can't reach unpublished/unlinked forms: the INSERT..SELECT
+-- sources them through forms' RLS (invisible → 0 rows inserted, no
+-- error), so assert NO ROW landed rather than a 42501.
+INSERT INTO form_responses (workspace_id, form_id, contact_id, answers)
+SELECT '11111111-1111-1111-1111-111111111111', f.id, '44444444-4444-4444-4444-444444444444', '{}'::jsonb
+FROM forms f WHERE f.title IN ('Draft form', 'Other project form');
+INSERT INTO test_results
+SELECT 'T13d portal cannot respond to invisible forms', count(*) = 0
+FROM form_responses fr
+JOIN forms f ON f.id = fr.form_id
+WHERE f.title IN ('Draft form', 'Other project form');
+
+-- portal duplicate response blocked (unique) — delete the seeded row first? No:
+-- the seed row blocks a second one; exercise via DO block catching unique_violation
+DO $check$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO form_responses (workspace_id, form_id, contact_id, answers)
+  SELECT '11111111-1111-1111-1111-111111111111', f.id, '44444444-4444-4444-4444-444444444444', '{}'::jsonb
+  FROM forms f WHERE f.title = 'Onboarding intake'
+  RETURNING id INTO v_id;
+  RAISE EXCEPTION 'T13f FAIL: duplicate form response NOT blocked';
+EXCEPTION
+  WHEN unique_violation THEN NULL;
+END
+$check$;
+
+-- portal can read its own responses (paired read policy)
+INSERT INTO test_results
+SELECT 'T13g portal reads own responses', count(*) = 1
+FROM form_responses;
+
+-- no-context sees nothing
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO test_results
+SELECT 'T13h no-ctx forms invisible', count(*) = 0
+FROM forms;
+INSERT INTO test_results
+SELECT 'T13i no-ctx responses invisible', count(*) = 0
+FROM form_responses;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
