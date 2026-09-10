@@ -245,7 +245,7 @@ DROP FUNCTION IF EXISTS portal_link_workspace(text);
 DROP FUNCTION IF EXISTS portal_project_ids(text);
 DROP TABLE IF EXISTS audit_logs;
 DROP TABLE IF EXISTS portal_links;
-DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS tasks CASCADE;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS contacts;
 DROP TABLE IF EXISTS customers;

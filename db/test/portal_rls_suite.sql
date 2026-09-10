@@ -214,6 +214,45 @@ FROM files;
 -- restore tenant ctx for cleanliness
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+
+-- ---------- T8: time_entries (00009) ----------
+INSERT INTO time_entries (workspace_id, project_id, user_id, started_at, ended_at, minutes, note)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', now() - interval '3 hours', now() - interval '1 hour', 120, 'kickoff call');
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T8b cross-tenant time invisible', count(*) = 0
+FROM time_entries WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+INSERT INTO test_results
+SELECT 'T8a own-workspace time visible', count(*) = 1
+FROM time_entries WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant insert blocked (ctx=2222, row claims ws=1111)
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO time_entries (workspace_id, project_id, user_id, started_at, ended_at, minutes)
+    VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', now(), now() + interval '1 hour', 60);
+    RAISE EXCEPTION 'T8c FAIL: cross-tenant time insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- no-context sees nothing
+SELECT set_config('app.workspace_id', '', false);
+INSERT INTO test_results
+SELECT 'T8d no-ctx time invisible', count(*) = 0
+FROM time_entries;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
