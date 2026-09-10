@@ -1274,6 +1274,165 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/approvals:
+    post:
+      summary: Request an approval from the customer
+      operationId: createApproval
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                description:
+                  type: string
+      responses:
+        "201":
+          description: Created (pending)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: List project approvals (staff, any status)
+      operationId: listProjectApprovals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Approvals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Approval"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /approvals/{id}/reopen:
+    post:
+      summary: Reopen a decided approval (new round)
+      operationId: reopenApproval
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204": {description: Reopened}
+        "404": { $ref: "#/components/responses/NotFound" }
+  /portal/{token}/approvals:
+    get:
+      summary: Portal — pending approvals for the linked projects
+      operationId: listPortalApprovals
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+      responses:
+        "200":
+          description: "Pending only — decided approvals vanish (1-click UX)"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    project_id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    description:
+                      type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "410": { description: Link expired or revoked }
+  /portal/{token}/approvals/{id}/decide:
+    post:
+      summary: Portal — Approve / Request changes with comment
+      operationId: decidePortalApproval
+      description: >
+        Pending-only: probes of decided or out-of-scope approvals both 404
+        (no oracle). Decisions write audit rows attributed to the contact.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, changes_requested]
+                comment:
+                  type: string
+      responses:
+        "200":
+          description: Decided
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [approved, changes_requested]
+                  id:
+                    type: string
+                    format: uuid
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /settings/slack:
     put:
       summary: Configure the workspace Slack webhook
@@ -1412,6 +1571,28 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    Approval:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, changes_requested]
+        decision_comment:
+          type: string
+        decided_at:
+          type: string
+        created_at:
+          type: string
     TimeEntry:
       type: object
       properties:

@@ -107,6 +107,9 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("GET /v1/projects/{id}/files", authed(s.listProjectFiles))
 	mux.Handle("DELETE /v1/files/{id}", authed(s.deleteFile))
 	mux.Handle("GET /v1/files/{id}/url", authed(s.fileDownloadURL))
+	mux.Handle("POST /v1/projects/{id}/approvals", authed(s.createApproval))
+	mux.Handle("GET /v1/projects/{id}/approvals", authed(s.listProjectApprovals))
+	mux.Handle("POST /v1/approvals/{id}/reopen", authed(s.reopenApproval))
 	mux.Handle("POST /v1/tasks/{id}/time", authed(s.logTaskTime))
 	mux.Handle("POST /v1/projects/{id}/time", authed(s.logProjectTime))
 	mux.Handle("GET /v1/projects/{id}/time", authed(s.listProjectTime))
@@ -119,6 +122,8 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
 	mux.HandleFunc("POST /v1/portal/{token}/tasks/{task_id}/complete", s.portal(s.completePortalTask))
 	mux.HandleFunc("GET /v1/portal/{token}/files", s.portal(s.listPortalFiles))
+	mux.HandleFunc("GET /v1/portal/{token}/approvals", s.portal(s.listPortalApprovals))
+	mux.HandleFunc("POST /v1/portal/{token}/approvals/{id}/decide", s.portal(s.decidePortalApproval))
 	mux.HandleFunc("GET /v1/portal/{token}/files/{file_id}/url", s.portal(s.portalFileURL))
 
 	return mux, pool, nil
