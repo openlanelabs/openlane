@@ -1387,6 +1387,203 @@ paths:
                     type: boolean
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/docs:
+    post:
+      summary: Staff — create a project doc (version 1)
+      operationId: createDoc
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                content_md:
+                  type: string
+                customer_visible:
+                  type: boolean
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Doc"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: Staff — list project docs (latest metadata)
+      operationId: listProjectDocs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Docs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Doc"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /docs/{id}:
+    get:
+      summary: Staff — current doc with latest content
+      operationId: getDoc
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Doc with content
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Doc"
+                  - type: object
+                    properties:
+                      content_md:
+                        type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      summary: Staff — edit a doc (appends a version, never overwrites)
+      operationId: updateDoc
+      description: >
+        Any subset of title/content_md/customer_visible. Appends a
+        doc_versions row and bumps latest_version; content carries
+        forward on title-only edits (spec §9: version history).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                content_md:
+                  type: string
+                customer_visible:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Doc"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /docs/{id}/versions:
+    get:
+      summary: Staff — version history (descending)
+      operationId: listDocVersions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    version:
+                      type: integer
+                    content_md:
+                      type: string
+                    created_by:
+                      type: string
+                    created_at:
+                      type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /portal/{token}/docs:
+    get:
+      summary: Portal — customer-visible docs (latest content only)
+      operationId: listPortalDocs
+      description: >
+        Customer sees ONLY what staff mark customer_visible (§7.3) —
+        the same visibility line as tasks and files. Select-only.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+      responses:
+        "200":
+          description: Docs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    title:
+                      type: string
+                    content_md:
+                      type: string
+                    updated_at:
+                      type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "410": { description: Link expired or revoked }
   /projects/{id}/csat:
     get:
       summary: Staff — CSAT responses, average, response rate, trend (§14)
@@ -1661,6 +1858,23 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    Doc:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        customer_visible:
+          type: boolean
+        latest_version:
+          type: integer
+        updated_at:
+          type: string
     CSATResponse:
       type: object
       properties:

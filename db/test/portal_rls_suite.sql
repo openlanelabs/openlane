@@ -421,6 +421,59 @@ SELECT 'T11h no-ctx csat invisible', count(*) = 0
 FROM csat_responses;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T12: docs (00013) ----------
+-- staff seed: doc + v1 on linked project, and one on UNLINKED 6666
+INSERT INTO docs (workspace_id, project_id, title, customer_visible, latest_version, created_by)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'SOW draft', true, 2, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  ('11111111-1111-1111-1111-111111111111', '66666666-6666-6666-6666-666666666666', 'Internal notes', false, 1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+INSERT INTO doc_versions (workspace_id, doc_id, version, content_md)
+SELECT d.workspace_id, d.id, 1, 'v1 content' FROM docs d
+UNION ALL
+SELECT d.workspace_id, d.id, 2, 'v2 content' FROM docs d WHERE d.latest_version = 2;
+
+INSERT INTO test_results
+SELECT 'T12a own-ws docs visible', count(*) = 2
+FROM docs WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T12b cross-tenant docs invisible', count(*) = 0
+FROM docs WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal ctx: linked+visible only (SOW draft), not internal notes
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T12c portal sees customer-visible doc', count(*) = 1
+FROM docs WHERE customer_visible;
+
+INSERT INTO test_results
+SELECT 'T12d portal doc versions scoped', count(*) = 2
+FROM doc_versions;
+
+-- portal INSERT blocked
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO docs (workspace_id, project_id, title)
+    VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'forged');
+    RAISE EXCEPTION 'T12e FAIL: portal doc insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+
+-- no-context sees nothing
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO test_results
+SELECT 'T12f no-ctx docs invisible', count(*) = 0
+FROM docs;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
