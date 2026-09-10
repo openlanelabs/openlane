@@ -109,6 +109,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.notifyEvent(ctx, workspaceFromCtx(ctx), "project.created",
+		"🚀 Project created: "+p.Name)
 	writeJSON(w, http.StatusCreated, p)
 }
 

@@ -47,6 +47,7 @@ type portalTaskOut struct {
 }
 
 type portalSessionOut struct {
+	WorkspaceID  string    `json:"-"`
 	ProjectID    string    `json:"project_id"`
 	ProjectName  string    `json:"project_name"`
 	CustomerName string    `json:"customer_name"`
@@ -323,6 +324,8 @@ func (s *Server) completePortalTask(ctx context.Context, tx pgx.Tx, w http.Respo
 	if err := tx.Commit(ctx); err != nil {
 		return http.StatusInternalServerError, errQuiet
 	}
+	s.notifyEvent(ctx, sessionWorkspaceFromCtx(ctx), "task.completed",
+		"✅ Task completed via portal: "+t.Title)
 	writeJSON(w, http.StatusOK, t)
 	return 0, nil
 }
