@@ -71,8 +71,8 @@ func riverTestStack(t *testing.T) (*httptestSrv, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ap.Close() })
-	if err := ensureRiver(context.Background(), ap); err != nil {
-		t.Fatalf("ensureRiver: %v", err)
+	if err := EnsureRiver(context.Background(), ap); err != nil {
+		t.Fatalf("EnsureRiver: %v", err)
 	}
 	// river_job lives outside goose (River's own migrator), so it survives
 	// the goose reset in filesTestStack — clear it per test run.

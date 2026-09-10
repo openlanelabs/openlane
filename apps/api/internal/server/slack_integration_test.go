@@ -41,8 +41,8 @@ func TestSlackNotifications(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer ap.Close()
-		if err := ensureRiver(ctx, ap); err != nil {
-			t.Fatalf("ensureRiver: %v", err)
+		if err := EnsureRiver(ctx, ap); err != nil {
+			t.Fatalf("EnsureRiver: %v", err)
 		}
 		if _, err := ap.Exec(ctx, "DELETE FROM river_job"); err != nil {
 			t.Fatal(err)

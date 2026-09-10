@@ -66,7 +66,7 @@ func (w *SlackNotifyWorker) Work(ctx context.Context, job *river.Job[SlackNotify
 	if err != nil {
 		return err // River retries with backoff
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode >= 300 {
 		return fmt.Errorf("slack webhook returned %d", res.StatusCode)
 	}

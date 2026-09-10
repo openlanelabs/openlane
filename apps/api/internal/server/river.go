@@ -54,13 +54,13 @@ func enqueueSlack(ctx context.Context, rc *river.Client[pgx.Tx], tx pgx.Tx, work
 	return err
 }
 
-// ensureRiver: applies River's own schema + grants for the app role.
+// EnsureRiver: applies River's own schema + grants for the app role.
 // Runs as the OWNER connection (migrations are owner-only per the compose
 // trust boundary). Idempotent: River's migrator no-ops when current.
 // ponytail: grants live here instead of a goose migration because River's
 // migrator must run first and is versioned independently — one startup
 // call, not a two-phase migration dance.
-func ensureRiver(ctx context.Context, adminPool *pgxpool.Pool) error {
+func EnsureRiver(ctx context.Context, adminPool *pgxpool.Pool) error {
 	migrator, err := rivermigrate.New(riverpgxv5.New(adminPool), nil)
 	if err != nil {
 		return fmt.Errorf("river migrator: %w", err)

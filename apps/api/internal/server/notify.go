@@ -1,15 +1,11 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"time"
 )
 
 // Notifications v2 (issue #54, spec §16 + ADR-0003): durable delivery.
@@ -17,8 +13,6 @@ import (
 // in its own short tx. Once committed, the worker owns delivery with
 // River's retry/backoff — a crashed API process can no longer drop a
 // notification (the §350 "never lose write" edge).
-
-const slackHTTPClient = 2 * time.Second
 
 // slackAllowed enforces the webhook allowlist (§17-5 SSRF guard): only
 // hooks.slack.com and *.slack.com/services/ URLs.
@@ -32,26 +26,6 @@ func slackAllowed(raw string) bool {
 	}
 	h := strings.ToLower(u.Hostname())
 	return h == "hooks.slack.com" || strings.HasSuffix(h, ".slack.com")
-}
-
-// slackDeliver posts {"text": ...} once. Used by the worker processor;
-// retries/backoff belong to River (job-level), not here.
-func slackDeliver(ctx context.Context, client *http.Client, webhookURL, text string) error {
-	body := []byte(`{"text":` + jsonString(text) + `}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode >= 300 {
-		return fmt.Errorf("slack webhook returned %d", res.StatusCode)
-	}
-	return nil
 }
 
 // notifyEvent fires the event if the workspace enabled it. Opens its own
