@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -155,4 +157,110 @@ func TestMagicLinkAuthFlow(t *testing.T) {
 
 func authGet(t *testing.T, h *httptestSrv, path string) (int, []byte) {
 	return authJSON(t, h, "GET", path, nil, nil)
+}
+
+func TestCookieSessionWithCSRF(t *testing.T) {
+	h, _ := authTestStack(t)
+
+	// login via dev token → cookies set
+	os.Setenv("OPENLANE_DEV_LOGIN", "1")
+	_, body := authJSON(t, h, "POST", "/v1/auth/magic-link",
+		map[string]string{"email": "asha@acme.test", "workspace_slug": "acme"}, nil)
+	var ml struct {
+		DevToken string `json:"dev_token"`
+	}
+	json.Unmarshal(body, &ml)
+	if ml.DevToken == "" {
+		t.Fatal("no dev token")
+	}
+
+	// raw client that keeps cookies
+	jar, _ := cookiejar.New(nil)
+	cl := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	doCookie := func(method, path string, body any, hdr map[string]string) (*http.Response, []byte) {
+		var rd io.Reader
+		if body != nil {
+			b, _ := json.Marshal(body)
+			rd = bytes.NewReader(b)
+		}
+		req, _ := http.NewRequest(method, h.URL+path, rd)
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		res, err := cl.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		out, _ := io.ReadAll(res.Body)
+		return res, out
+	}
+
+	res, out := doCookie("GET", "/v1/auth/magic-link/consume?token="+ml.DevToken, nil, nil)
+	if res.StatusCode != 200 {
+		t.Fatalf("consume = %d %s", res.StatusCode, out)
+	}
+
+	// cookies landed: httpOnly refresh + readable csrf
+	var refreshCookie, csrfCookieV *http.Cookie
+	root, _ := url.Parse(h.URL)
+	authPath, _ := url.Parse(h.URL + "/v1/auth/anything")
+	for _, c := range jar.Cookies(authPath) { // refresh cookie path=/v1/auth
+		if c.Name == "openlane_refresh" {
+			refreshCookie = c
+		}
+	}
+	for _, c := range jar.Cookies(root) { // csrf path=/
+		if c.Name == "openlane_csrf" {
+			csrfCookieV = c
+		}
+	}
+	if refreshCookie == nil || csrfCookieV == nil {
+		t.Fatalf("cookies missing: refresh=%v csrf=%v", refreshCookie, csrfCookieV)
+	}
+
+	// refresh WITHOUT CSRF header (cookie path) → 403
+	res, out = doCookie("POST", "/v1/auth/refresh", map[string]any{}, nil)
+	if res.StatusCode != 403 {
+		t.Fatalf("cookie refresh without CSRF = %d %s", res.StatusCode, out)
+	}
+
+	// refresh WITH CSRF → 200, cookie rotated
+	oldRefresh := refreshCookie.Value
+	res, out = doCookie("POST", "/v1/auth/refresh", map[string]any{}, map[string]string{"X-OpenLane-CSRF": csrfCookieV.Value})
+	if res.StatusCode != 200 {
+		t.Fatalf("cookie refresh with CSRF = %d %s", res.StatusCode, out)
+	}
+	for _, c := range jar.Cookies(authPath) {
+		if c.Name == "openlane_refresh" && c.Value == oldRefresh {
+			t.Fatal("refresh cookie was not rotated")
+		}
+	}
+
+	// body path (pure API client) unaffected: body token + NO cookie involvement
+	tok := struct {
+		RefreshToken string `json:"refresh_token"`
+	}{}
+	json.Unmarshal(out, &tok)
+	if tok.RefreshToken == "" {
+		t.Fatal("response lacks refresh_token for API clients")
+	}
+
+	// logout via cookie + CSRF → 204 + cookies cleared (csrf rotated by
+	// refresh — re-read from the jar)
+	for _, c := range jar.Cookies(root) {
+		if c.Name == "openlane_csrf" {
+			csrfCookieV = c
+		}
+	}
+	res, out = doCookie("POST", "/v1/auth/logout", map[string]any{}, map[string]string{"X-OpenLane-CSRF": csrfCookieV.Value})
+	if res.StatusCode != 204 {
+		t.Fatalf("cookie logout = %d %s", res.StatusCode, out)
+	}
+	// after logout, the rotated cookie no longer refreshes
+	res, out = doCookie("POST", "/v1/auth/refresh", map[string]any{}, map[string]string{"X-OpenLane-CSRF": csrfCookieV.Value})
+	if res.StatusCode != 400 && res.StatusCode != 401 {
+		t.Fatalf("refresh after logout = %d (want 400/401 — cookie cleared or token dead)", res.StatusCode)
+	}
 }

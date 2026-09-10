@@ -23,3 +23,6 @@ tmp/
 .idea/
 .vscode/
 *.swp
+
+# stray compiled binaries (worker builds via `go build ./...` in cwd)
+apps/worker/worker

@@ -745,15 +745,16 @@ paths:
       summary: Rotate a refresh token (family theft detection)
       description: >
         Refresh tokens rotate on every use. Presenting an already-rotated
-        token revokes the entire family (assumed theft).
+        token revokes the entire family (assumed theft). The token comes
+        from the JSON body OR the httpOnly openlane_refresh cookie; the
+        cookie path additionally requires the X-OpenLane-CSRF header to
+        match the openlane_csrf cookie (double-submit, section 17-6).
       operationId: refreshSession
       requestBody:
-        required: true
         content:
           application/json:
             schema:
               type: object
-              required: [refresh_token]
               properties:
                 refresh_token: {type: string, minLength: 43}
       responses:
@@ -762,30 +763,42 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SessionTokens"}
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: Unknown or revoked token (family revoked if reuse)
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: CSRF token mismatch (cookie-authenticated request)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /auth/logout:
     post:
-      summary: Revoke the refresh family (bearer auth)
+      summary: Revoke the refresh family
+      description: >
+        Authenticates BY the refresh token (JSON body or httpOnly cookie +
+        CSRF double-submit) — a dead access token cannot lock a user out of
+        logging out.
       operationId: logout
-      security:
-        - bearerAuth: []
       requestBody:
-        required: true
         content:
           application/json:
             schema:
               type: object
-              required: [refresh_token]
               properties:
                 refresh_token: {type: string, minLength: 43}
       responses:
         "204": {description: Logged out}
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: Bad token
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: CSRF token mismatch (cookie-authenticated request)
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
