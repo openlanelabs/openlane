@@ -297,6 +297,57 @@ END
 $check$;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+
+-- ---------- T10: approvals (00011) ----------
+INSERT INTO approvals (workspace_id, project_id, title, requested_by)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'Kickoff scope sign-off', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  ('11111111-1111-1111-1111-111111111111', '66666666-6666-6666-6666-666666666666', 'Phase 2 sign-off', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+
+-- staff ctx sees it
+INSERT INTO test_results
+SELECT 'T10a own-ws approvals visible', count(*) = 2
+FROM approvals WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T10b cross-tenant approval invisible', count(*) = 0
+FROM approvals WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal ctx (active link 'suite-token-a' -> project 5555): sees it
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T10c portal sees approval for its project', count(*) = 1
+FROM approvals WHERE project_id = '55555555-5555-5555-5555-555555555555';
+
+-- portal sees NOTHING for project 6666 (no link) even though same ws
+INSERT INTO test_results
+SELECT 'T10d portal blocked from unlinked project approval', count(*) = 0
+FROM approvals WHERE project_id = '66666666-6666-6666-6666-666666666666';
+
+-- portal INSERT blocked (WITH CHECK staff-only)
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO approvals (workspace_id, project_id, title)
+    VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'forged');
+    RAISE EXCEPTION 'T10e FAIL: portal approval insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+
+-- no-context sees nothing
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO test_results
+SELECT 'T10f no-ctx approval invisible', count(*) = 0
+FROM approvals;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
