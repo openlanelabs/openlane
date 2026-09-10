@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,8 @@ import (
 type Server struct {
 	pool       *pgxpool.Pool
 	staffToken string // empty = staff endpoints return 503
+	s3         s3Config
+	http       *http.Client // for S3 HEAD (uploaded-verify); short timeout
 }
 
 // ConfigFromEnv reads operator config. DATABASE_URL must be the openlane_app
@@ -36,7 +39,12 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	if err != nil {
 		return nil, nil, err
 	}
-	s := &Server{pool: pool, staffToken: staffToken}
+	s := &Server{
+		pool:       pool,
+		staffToken: staffToken,
+		s3:         s3ConfigFromEnv(os.Getenv),
+		http:       &http.Client{Timeout: 5 * time.Second},
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -82,9 +90,17 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("GET /v1/settings/slack", authed(s.getSlackSettings))
 	mux.Handle("DELETE /v1/settings/slack", authed(s.deleteSlackSettings))
 
+	mux.Handle("POST /v1/projects/{id}/files", authed(s.createProjectFile))
+	mux.Handle("POST /v1/files/{id}/uploaded", authed(s.confirmFileUploaded))
+	mux.Handle("GET /v1/projects/{id}/files", authed(s.listProjectFiles))
+	mux.Handle("DELETE /v1/files/{id}", authed(s.deleteFile))
+	mux.Handle("GET /v1/files/{id}/url", authed(s.fileDownloadURL))
+
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
 	mux.HandleFunc("POST /v1/portal/{token}/tasks/{task_id}/complete", s.portal(s.completePortalTask))
+	mux.HandleFunc("GET /v1/portal/{token}/files", s.portal(s.listPortalFiles))
+	mux.HandleFunc("GET /v1/portal/{token}/files/{file_id}/url", s.portal(s.portalFileURL))
 
 	return mux, pool, nil
 }

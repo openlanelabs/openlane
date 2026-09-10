@@ -144,13 +144,86 @@ FROM templates;
 -- restore tenant ctx for cleanliness
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T7: files (00008) ----------
+-- customer 3333…(Adobe) belongs to ws 1111; project 5555… is theirs.
+INSERT INTO files (id, workspace_id, project_id, name, object_key, content_type, size_bytes, status, customer_visible)
+VALUES
+  ('f1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'kickoff.pdf', '11111111-1111-1111-1111-111111111111/55555555-5555-5555-5555-555555555555/aaaaaaaa-1111-1111-1111-111111111111', 'application/pdf', 1024, 'uploaded', true),
+  ('f2222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'internal-notes.md', '11111111-1111-1111-1111-111111111111/55555555-5555-5555-5555-555555555555/bbbbbbbb-2222-2222-2222-222222222222', 'text/markdown', 512, 'uploaded', false);
+-- ws 2222: own customer + project + file (under ITS ctx so WITH CHECK passes)
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO customers (id, workspace_id, name) VALUES
+  ('77777777-7777-7777-7777-777777777777', '22222222-2222-2222-2222-222222222222', 'Gamma Inc');
+INSERT INTO projects (id, workspace_id, customer_id, name, status) VALUES
+  ('88888888-8888-8888-8888-888888888888', '22222222-2222-2222-2222-222222222222', '77777777-7777-7777-7777-777777777777', 'Gamma Setup', 'active');
+INSERT INTO files (id, workspace_id, project_id, name, object_key, content_type, size_bytes, status, customer_visible)
+VALUES
+  ('f3333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222', '88888888-8888-8888-8888-888888888888', 'theirs.txt', '22222222-2222-2222-2222-222222222222/88888888-8888-8888-8888-888888888888/cccccccc-3333-3333-3333-333333333333', 'text/plain', 256, 'uploaded', false);
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+INSERT INTO test_results
+SELECT 'T7a own-workspace files visible', count(*) = 2
+FROM files WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+-- cross-tenant invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T7b cross-tenant file invisible', count(*) = 0
+FROM files WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal ctx: T5 revoked suite-token-a earlier in this run — re-activate it
+-- (as staff ctx, then switch to portal ctx) so the portal branch is testable.
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+UPDATE portal_links SET status = 'active'
+WHERE token_hash = encode(sha256('suite-token-a'::bytea), 'hex');
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T7c portal sees customer_visible only', count(*) = 1 AND bool_and(name = 'kickoff.pdf')
+FROM files;
+
+-- portal ctx can never see internal file via primary key
+INSERT INTO test_results
+SELECT 'T7d portal internal-file pk invisible', count(*) = 0
+FROM files WHERE id = 'f2222222-2222-2222-2222-222222222222';
+
+-- portal INSERT blocked (policy WITH CHECK requires staff ctx)
+DO $check$
+BEGIN
+  BEGIN
+    INSERT INTO files (workspace_id, project_id, name, object_key, content_type, size_bytes, customer_visible)
+    VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'evil', 'evil-key', 'text/plain', 1, true);
+    RAISE EXCEPTION 'T7e FAIL: portal file insert NOT blocked';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$check$;
+INSERT INTO test_results
+SELECT 'T7e portal insert blocked', count(*) = 0
+FROM files WHERE name = 'evil';
+
+-- no-context sees nothing
+SELECT set_config('app.portal_token_hash', '', false);
+SELECT set_config('app.workspace_id', '', false);
+INSERT INTO test_results
+SELECT 'T7f no-ctx files invisible', count(*) = 0
+FROM files;
+
+-- restore tenant ctx for cleanliness
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
-DECLARE failed int;
+DECLARE failed int; r record;
 BEGIN
   SELECT count(*) INTO failed FROM test_results WHERE NOT ok;
   IF failed > 0 THEN
-    RAISE EXCEPTION 'RLS suite: % of % checks FAILED — see test_results above', failed, (SELECT count(*) FROM test_results);
+    FOR r IN SELECT name FROM test_results WHERE NOT ok LOOP
+      RAISE NOTICE 'FAILED CHECK: %', r.name;
+    END LOOP;
+    RAISE EXCEPTION 'RLS suite: % of % checks FAILED — names above', failed, (SELECT count(*) FROM test_results);
   END IF;
   RAISE NOTICE 'RLS suite: all % checks passed', (SELECT count(*) FROM test_results);
 END $$;
