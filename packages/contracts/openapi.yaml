@@ -825,6 +825,195 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /projects/{id}/files:
+    post:
+      summary: Create file metadata + presigned upload URL
+      operationId: createProjectFile
+      description: |
+        Server generates the object key (ws/project/uuid) — client file
+        names never reach storage paths. Returns a 15-min presigned PUT.
+        The client PUTs bytes to storage directly; the API never proxies
+        file content.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, content_type, size_bytes]
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                content_type:
+                  type: string
+                  description: allowlist pdf/docx/xlsx/pptx/csv/txt/md/png/jpg/zip
+                size_bytes:
+                  type: integer
+                  minimum: 1
+                  maximum: 209715200
+                customer_visible:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Created — upload_url is a presigned PUT (15 min)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/File"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: List project files (metadata)
+      operationId: listProjectFiles
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Files for the project
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/File"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /files/{id}/uploaded:
+    post:
+      summary: Client confirms the presigned PUT completed
+      operationId: confirmFileUploaded
+      description: |
+        Server HEADs the object to verify existence and size; mismatches
+        mark the file failed.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: status=uploaded
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: object missing or size mismatch — file marked failed
+  /files/{id}:
+    delete:
+      summary: Soft-delete a file
+      operationId: deleteFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /files/{id}/url:
+    get:
+      summary: Fresh presigned GET (15 min)
+      operationId: fileDownloadURL
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  expires_in:
+                    type: string
+        "404": { $ref: "#/components/responses/NotFound" }
+  /portal/{token}/files:
+    get:
+      summary: Portal — list customer-visible files
+      operationId: listPortalFiles
+      description: RLS scopes to the link's project; internal files are
+        structurally invisible.
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+      responses:
+        "200":
+          description: customer-visible files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/File"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "410": { $ref: "#/components/responses/Gone" }
+  /portal/{token}/files/{file_id}/url:
+    get:
+      summary: Portal — presigned GET for a visible file
+      operationId: portalFileURL
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: file_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  expires_in:
+                    type: string
+        "404": { $ref: "#/components/responses/NotFound" }
   /settings/slack:
     put:
       summary: Configure the workspace Slack webhook
@@ -934,6 +1123,35 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    File:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        status:
+          type: string
+          enum: [pending, uploaded, failed]
+        customer_visible:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        upload_url:
+          type: string
+          description: presigned PUT — create response only
+        url:
+          type: string
+          description: presigned GET — /url responses only
     SessionTokens:
       type: object
       properties:
