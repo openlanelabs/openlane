@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -10,9 +12,11 @@ import (
 	"time"
 )
 
-// Notifications v1 (issue #45, spec §16): best-effort Slack webhook delivery.
-// ponytail: synchronous fire-and-forget in the request path — the
-// transactional-outbox/worker pattern replaces it when River lands.
+// Notifications v2 (issue #54, spec §16 + ADR-0003): durable delivery.
+// notifyEvent resolves settings, then enqueues a slack_notify River job
+// in its own short tx. Once committed, the worker owns delivery with
+// River's retry/backoff — a crashed API process can no longer drop a
+// notification (the §350 "never lose write" edge).
 
 const slackHTTPClient = 2 * time.Second
 
@@ -30,33 +34,24 @@ func slackAllowed(raw string) bool {
 	return h == "hooks.slack.com" || strings.HasSuffix(h, ".slack.com")
 }
 
-// slackNotify posts {"text": ...} with a single retry. Never returns an
-// error — delivery is best-effort; failures log to stderr only.
-func slackNotify(ctx context.Context, webhookURL, text string) {
-	if webhookURL == "" {
-		return
-	}
+// slackDeliver posts {"text": ...} once. Used by the worker processor;
+// retries/backoff belong to River (job-level), not here.
+func slackDeliver(ctx context.Context, client *http.Client, webhookURL, text string) error {
 	body := []byte(`{"text":` + jsonString(text) + `}`)
-	client := &http.Client{Timeout: slackHTTPClient}
-	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		res, err := client.Do(req)
-		if err == nil {
-			_ = res.Body.Close()
-			if res.StatusCode < 300 {
-				return
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(500 * time.Millisecond):
-		}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+	if err != nil {
+		return err
 	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("slack webhook returned %d", res.StatusCode)
+	}
+	return nil
 }
 
 // notifyEvent fires the event if the workspace enabled it. Opens its own
@@ -91,5 +86,27 @@ func (s *Server) notifyEvent(ctx context.Context, workspaceID, event, text strin
 	if err != nil || !enabled || url == "" {
 		return
 	}
-	go slackNotify(cctx, url, text)
+	// enqueue the durable job in its own short tx. Not part of the
+	// caller's tx: these call sites fire AFTER their own commit, and
+	// coupling them would require threading tx through every handler.
+	// The gap (crash between caller commit and this enqueue) is covered
+	// where it matters most — sf_project_create inlines its slack job.
+	if err := s.enqueueSlackEvent(cctx, workspaceID, url, text); err != nil {
+		// delivery is still best-effort from the API's perspective:
+		// log and move on. River owns it from here.
+		log.Printf("slack enqueue failed ws=%s event=%s: %v", workspaceID, event, err)
+	}
+}
+
+// enqueueSlackEvent: open tx, insert job, commit. Self-contained.
+func (s *Server) enqueueSlackEvent(ctx context.Context, workspaceID, url, text string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := enqueueSlack(ctx, s.river, tx, workspaceID, url, text); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

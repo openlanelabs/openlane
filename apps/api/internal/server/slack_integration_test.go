@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSlackNotifications(t *testing.T) {
@@ -18,7 +20,9 @@ func TestSlackNotifications(t *testing.T) {
 	var received []string
 	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		var msg struct{ Text string `json:"text"` }
+		var msg struct {
+			Text string `json:"text"`
+		}
 		json.Unmarshal(b, &msg)
 		mu.Lock()
 		received = append(received, msg.Text)
@@ -29,6 +33,21 @@ func TestSlackNotifications(t *testing.T) {
 
 	srv, _, adminPool, ctx := importTestStack(t)
 	h := &httptestSrv{t: t, URL: srv.URL}
+	// River schema + grants (importTestStack only runs goose; river's own
+	// migrator is separate — see ADR-0003 note in 00010).
+	{
+		ap, err := pgxpool.New(ctx, adminDSN(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ap.Close()
+		if err := ensureRiver(ctx, ap); err != nil {
+			t.Fatalf("ensureRiver: %v", err)
+		}
+		if _, err := ap.Exec(ctx, "DELETE FROM river_job"); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// allowlist bypass for the httptest sink (CI-only env, mirrors OPENLANE_SLACK_ALLOW_ANY)
 	t.Setenv("OPENLANE_SLACK_ALLOW_ANY", "1")
@@ -52,7 +71,9 @@ func TestSlackNotifications(t *testing.T) {
 
 	// create a project → project.created fires
 	_, body = h.do("POST", "/v1/projects", map[string]any{"customer_id": custID, "name": "Slack Notify Project", "status": "draft"})
-	var proj struct{ ID string `json:"id"` }
+	var proj struct {
+		ID string `json:"id"`
+	}
 	json.Unmarshal(body, &proj)
 	if proj.ID == "" {
 		t.Fatalf("project create failed: %s", body)
@@ -69,7 +90,12 @@ func TestSlackNotifications(t *testing.T) {
 		t.Fatal("task not completable")
 	}
 
-	// wait for async deliveries
+	// notifications are now durable River jobs (ADR-0003 outbox): enqueue
+	// first, then run the real worker to drain them.
+	runWorkerOnce(t)
+
+	// wait for deliveries (worker already exited; slack_notify is POSTed
+	// synchronously inside the job, so by now they've landed)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		mu.Lock()

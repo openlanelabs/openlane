@@ -62,11 +62,10 @@ services:
       # ADR-0002: the app connects as the NON-OWNER role — RLS applies.
       # Owner connections are migration-only (see the migrate service).
       DATABASE_URL: postgres://openlane_app:openlane_app@postgres:5432/openlane?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://vaults3:9000
-      S3_ACCESS_KEY: openlane
-      S3_SECRET_KEY: openlane-secret
-      S3_BUCKET: openlane-files
+      OPENLANE_S3_ENDPOINT: http://vaults3:9000
+      OPENLANE_S3_KEY: openlane
+      OPENLANE_S3_SECRET: openlane-secret
+      OPENLANE_S3_BUCKET: openlane-files
     ports:
       - "8080:8080"
     healthcheck:
@@ -77,8 +76,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
@@ -87,12 +84,9 @@ services:
       context: .
       dockerfile: infra/docker/worker.Dockerfile
     environment:
+      # ADR-0002: worker runs as the app role — RLS applies; the SF
+      # processor sets workspace ctx per job from the job's own args.
       DATABASE_URL: postgres://openlane_app:openlane_app@postgres:5432/openlane?sslmode=disable
-      REDIS_URL: redis://redis:6379
-      S3_ENDPOINT: http://vaults3:9000
-      S3_ACCESS_KEY: openlane
-      S3_SECRET_KEY: openlane-secret
-      S3_BUCKET: openlane-files
     depends_on:
       postgres:
         condition: service_healthy

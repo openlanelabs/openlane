@@ -1157,6 +1157,110 @@ paths:
                 items:
                   $ref: "#/components/schemas/TimeEntry"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /integrations/salesforce:
+    put:
+      summary: Configure Salesforce one-way integration
+      operationId: putSalesforceSettings
+      description: |
+        Stores the webhook secret encrypted at rest (AES-256-GCM,
+        OPENLANE_INTEGRATION_KEY). One-way only (spec section 335):
+        OpenLane never writes to Salesforce in v1.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [webhook_secret]
+              properties:
+                instance_url:
+                  type: string
+                webhook_secret:
+                  type: string
+                  minLength: 16
+                default_template_id:
+                  type: string
+                  format: uuid
+      responses:
+        "204": { description: Saved }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      summary: Salesforce integration status (never echoes the secret)
+      operationId: getSalesforceSettings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  instance_url:
+                    type: string
+                  default_template_id:
+                    type: string
+                    format: uuid
+                  updated_at:
+                    type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /integrations/salesforce/webhook:
+    post:
+      summary: Salesforce closed-won webhook (HMAC-verified, unauthenticated)
+      operationId: salesforceWebhook
+      description: |
+        Machine-to-machine: HMAC-SHA256 over the raw body in the
+        X-OpenLane-Signature header (base64). A closed-won Opportunity
+        (stageName == "Closed Won") dedupes by (organizationId,
+        opportunityId) and enqueues project creation transactionally —
+        duplicate deliveries and API crashes cannot double-create or
+        lose a project (outbox, ADR-0003).
+      parameters:
+        - name: ws
+          in: query
+          required: true
+          description: Workspace slug
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                organizationId:
+                  type: string
+                opportunityId:
+                  type: string
+                accountName:
+                  type: string
+                amount:
+                  type: string
+                closeDate:
+                  type: string
+                stageName:
+                  type: string
+      responses:
+        "200":
+          description: "Accepted (status: queued | duplicate | ignored)"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [queued, duplicate, ignored]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /settings/slack:
     put:
       summary: Configure the workspace Slack webhook
