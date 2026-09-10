@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 const API = process.env.OPENLANE_API_URL ?? "http://localhost:8080";
 
-async function proxy(req: NextRequest) {
+async function proxy(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = req.headers.get("authorization");
   if (!auth) return NextResponse.json({ title: "unauthorized" }, { status: 401 });
-  const url = new URL(req.nextUrl.pathname.replace(/^\/api/, `/v1`), API);
-  req.nextUrl.searchParams.forEach((v, k) => url.searchParams.set(k, v));
-  const res = await fetch(url, {
-    method: req.method,
+  const { id } = await params;
+  const res = await fetch(`${API}/v1/tasks/${encodeURIComponent(id)}`, {
+    method: req.method === "GET" ? "GET" : req.method === "PATCH" ? "PATCH" : "DELETE",
     headers: { authorization: auth, "content-type": "application/json" },
     body: req.method === "GET" || req.method === "DELETE" ? undefined : await req.text(),
     cache: "no-store",
@@ -20,6 +19,5 @@ async function proxy(req: NextRequest) {
 }
 
 export const GET = proxy;
-export const POST = proxy;
 export const PATCH = proxy;
 export const DELETE = proxy;
