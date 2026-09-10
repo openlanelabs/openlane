@@ -46,7 +46,7 @@ func slackNotify(ctx context.Context, webhookURL, text string) {
 		req.Header.Set("Content-Type", "application/json")
 		res, err := client.Do(req)
 		if err == nil {
-			res.Body.Close()
+			_ = res.Body.Close()
 			if res.StatusCode < 300 {
 				return
 			}
