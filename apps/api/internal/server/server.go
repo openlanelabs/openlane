@@ -159,6 +159,8 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 
 	mux.Handle("GET /v1/metrics", authed(s.getMetrics))
 	mux.Handle("GET /v1/projects/{id}/budget", authed(s.getProjectBudget))
+	mux.Handle("GET /v1/projects/{id}/margin", authed(s.getProjectMargin))
+	mux.Handle("GET /v1/margins", authed(s.listMargins))
 	mux.Handle("POST /v1/rate-cards", authed(s.createRateCard))
 	mux.Handle("GET /v1/rate-cards", authed(s.listRateCards))
 	mux.Handle("GET /v1/rate-cards/{id}", authed(s.getRateCard))
