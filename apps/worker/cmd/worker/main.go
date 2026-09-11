@@ -21,9 +21,12 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -64,6 +67,16 @@ type HSProjectCreateArgs struct {
 }
 
 func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
+
+// CalendarImportArgs mirrors the api package struct (JSON coupling).
+type CalendarImportArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	ICSURL      string `json:"ics_url"`
+	ProjectID   string `json:"project_id"`
+	UserID      string `json:"user_id"`
+}
+
+func (CalendarImportArgs) Kind() string { return "calendar_import" }
 
 // TimeReminderArgs: nudge members with zero time logged this week
 // (P1 §307). Window tag makes the enqueue unique per fire window —
@@ -248,6 +261,204 @@ func (w *JiraStatusPushWorker) Work(ctx context.Context, job *river.Job[JiraStat
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE task_links SET last_synced_at = now() WHERE task_id = $1 AND provider = 'jira'`, job.Args.TaskID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// calImportable: the worker's own minimal ICS scan (VEVENT
+// DTSTART/DTEND/SUMMARY/UID with line-unfolding). Duplicated from the
+// api package per the JSON-coupling contract — the worker owns the
+// network fetch (user URLs never fetch inside request handlers).
+type calEvent struct {
+	UID     string
+	Summary string
+	Start   time.Time
+	End     time.Time
+}
+
+func calImportable(raw []byte) []calEvent {
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	lines := strings.Split(text, "\n")
+	for i := 0; i < len(lines)-1; i++ {
+		for i+1 < len(lines) && strings.HasPrefix(lines[i+1], " ") {
+			lines[i] += strings.TrimPrefix(lines[i+1], " ")
+			lines = append(lines[:i+1], lines[i+2:]...)
+		}
+	}
+	var out []calEvent
+	var cur *calEvent
+	parseDate := func(v string) (time.Time, bool) {
+		v = strings.TrimSpace(v)
+		if strings.HasSuffix(v, "Z") {
+			if t, err := time.Parse("20060102T150405Z", v); err == nil {
+				return t, true
+			}
+			return time.Time{}, false
+		}
+		if t, err := time.Parse("20060102T150405", v); err == nil {
+			return t.UTC(), true
+		}
+		if t, err := time.Parse("20060102", v); err == nil {
+			return t.UTC(), true
+		}
+		return time.Time{}, false
+	}
+	for _, ln := range lines {
+		switch {
+		case strings.HasPrefix(ln, "BEGIN:VEVENT"):
+			cur = &calEvent{}
+		case strings.HasPrefix(ln, "END:VEVENT"):
+			if cur != nil && !cur.Start.IsZero() && !cur.End.IsZero() && cur.UID != "" {
+				out = append(out, *cur)
+			}
+			cur = nil
+		case cur == nil:
+			continue
+		default:
+			i := strings.Index(ln, ":")
+			if i <= 0 {
+				continue
+			}
+			base, val := ln[:i], ln[i+1:]
+			if j := strings.Index(base, ";"); j > 0 {
+				base = base[:j]
+			}
+			switch strings.ToUpper(base) {
+			case "UID":
+				cur.UID = strings.TrimSpace(val)
+			case "SUMMARY":
+				cur.Summary = strings.TrimSpace(val)
+			case "DTSTART":
+				if t, ok := parseDate(val); ok {
+					cur.Start = t
+				}
+			case "DTEND":
+				if t, ok := parseDate(val); ok {
+					cur.End = t
+				}
+			}
+		}
+	}
+	return out
+}
+
+// calFetch: SSRF-guarded GET — the dial-time IP check is authoritative
+// (hostname validation is DNS-rebinding-bypassable).
+func calFetch(ctx context.Context, raw string) ([]byte, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, errors.New("ics_url must be an http(s) URL")
+	}
+	if os.Getenv("OPENLANE_CAL_ALLOW_ANY") != "1" && calBlocked(u.Hostname()) {
+		return nil, errors.New("private calendar hosts are not allowed")
+	}
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			if os.Getenv("OPENLANE_CAL_ALLOW_ANY") == "1" {
+				return nil
+			}
+			if calBlocked(host) {
+				return errors.New("private calendar hosts are not allowed")
+			}
+			return nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("calendar feed returned %d", res.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(res.Body, 2<<20))
+}
+
+func calBlocked(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		strings.HasSuffix(host, ".local")
+}
+
+// CalendarImportWorker: fetches the feed, filters (past week only,
+// 5min–12h spans), inserts drafts idempotently (cal-uid unique index).
+type CalendarImportWorker struct {
+	river.WorkerDefaults[CalendarImportArgs]
+	pool *pgxpool.Pool
+}
+
+func (w *CalendarImportWorker) Work(ctx context.Context, job *river.Job[CalendarImportArgs]) error {
+	raw, err := calFetch(ctx, job.Args.ICSURL)
+	if err != nil {
+		return err
+	}
+	events := calImportable(raw)
+	now := time.Now().UTC()
+	weekAgo := now.AddDate(0, 0, -7)
+
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.workspace_id', $1, true)", job.Args.WorkspaceID); err != nil {
+		return err
+	}
+	imported := 0
+	for _, ev := range events {
+		st, en := ev.Start.UTC(), ev.End.UTC()
+		if !en.After(weekAgo) || en.After(now) || en.Sub(st) < 5*time.Minute {
+			continue
+		}
+		if en.Sub(st) > 12*time.Hour {
+			en = st.Add(12 * time.Hour)
+		}
+		minutes := int(en.Sub(st).Minutes())
+		if minutes < 1 {
+			continue
+		}
+		var id string
+		err := tx.QueryRow(ctx, `
+			INSERT INTO time_entries (workspace_id, project_id, task_id, user_id, started_at, ended_at, minutes, note, refs)
+			SELECT $1, p.id, NULL, $2::uuid, $3, $4, $5,
+			       COALESCE(NULLIF($6, ''), 'Imported from calendar'),
+			       jsonb_build_object('calendar_uid', $7::text)
+			FROM projects p
+			WHERE p.id = $8::uuid AND p.deleted_at IS NULL
+			ON CONFLICT DO NOTHING
+			RETURNING id`,
+			job.Args.WorkspaceID, job.Args.UserID, st, en, minutes, ev.Summary, ev.UID, job.Args.ProjectID).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // already imported by UID
+		}
+		if err != nil {
+			return err
+		}
+		imported++
+		_ = id
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES ($1, 'integration', $1, 'system', NULLIF($2, '')::uuid, 'calendar.imported', 'api', $3)`,
+		job.Args.WorkspaceID, job.Args.UserID, []byte(`{"imported":`+jsonString(strconv.Itoa(imported))+`}`)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -568,6 +779,7 @@ func main() {
 	river.AddWorker(workers, &HSProjectCreateWorker{pool: pool, river: rc})
 	river.AddWorker(workers, &JiraStatusPushWorker{pool: pool})
 	river.AddWorker(workers, &TimeReminderWorker{pool: pool})
+	river.AddWorker(workers, &CalendarImportWorker{pool: pool})
 
 	rc, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{

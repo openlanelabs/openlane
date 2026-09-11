@@ -1108,6 +1108,29 @@ INSERT INTO test_results
 SELECT 'T23b cross-ws read blocked', NOT EXISTS (
   SELECT 1 FROM project_notes WHERE body = 'kickoff notes');
 
+-- ---------- T24: calendar refs (00029) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO time_entries (workspace_id, project_id, user_id, started_at, ended_at, minutes, refs)
+VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        now() - interval '3 hours', now() - interval '2 hours', 60, '{"calendar_uid":"t24-abc"}');
+INSERT INTO test_results
+SELECT 'T24a refs roundtrip', EXISTS (
+  SELECT 1 FROM time_entries WHERE refs->>'calendar_uid' = 't24-abc');
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO time_entries (workspace_id, project_id, user_id, started_at, ended_at, minutes, refs)
+    VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            now() - interval '3 hours', now() - interval '2 hours', 60, '{"calendar_uid":"t24-abc"}');
+    RAISE EXCEPTION 'T24b expected unique violation';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T24b calendar uid unique', count(*) = 1 FROM time_entries
+WHERE refs->>'calendar_uid' = 't24-abc';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

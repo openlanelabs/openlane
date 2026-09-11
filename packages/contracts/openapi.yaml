@@ -2584,6 +2584,84 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProjectNote"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /calendar/preview:
+    post:
+      summary: Preview a calendar import (dry run on pasted ICS)
+      operationId: calendarPreview
+      description: |
+        Parses pasted ICS content (the calendar export) and returns the
+        events that WOULD import: past week only, 5min–12h spans
+        (>12h capped). No network on this path — the feed URL fetch
+        runs queued in the worker.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ics_text]
+              properties:
+                ics_text:
+                  type: string
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: {type: integer}
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uid: {type: string}
+                        summary: {type: string}
+                        started_at: {type: string, format: date-time}
+                        ended_at: {type: string, format: date-time}
+                        minutes: {type: integer}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /calendar/import:
+    post:
+      summary: Queue a calendar ICS feed import
+      operationId: calendarImport
+      description: |
+        Enqueues the fetch as a river job — user URLs fetch in the
+        worker (the platform's SSRF stance, same as SF/HS/slack).
+        Idempotent by calendar UID (partial unique index on refs);
+        re-importing the same feed inserts nothing (§311). Counts land
+        in the audit log (calendar.imported).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ics_url, project_id]
+              properties:
+                ics_url:
+                  type: string
+                project_id:
+                  type: string
+                  format: uuid
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queued: {type: boolean}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /projects/{id}/approvals:
     post:
       summary: Request an approval from the customer
