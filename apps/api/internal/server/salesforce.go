@@ -102,9 +102,9 @@ func (s *Server) putSFSettings(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	ctx := r.Context()
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspace_integrations (workspace_id, instance_url, webhook_secret_enc, default_template_id)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, NULLIF($1,''), $2, NULLIF($3,'')::uuid)
-		ON CONFLICT (workspace_id) DO UPDATE SET
+		INSERT INTO workspace_integrations (workspace_id, provider, instance_url, webhook_secret_enc, default_template_id)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'salesforce', NULLIF($1,''), $2, NULLIF($3,'')::uuid)
+		ON CONFLICT (workspace_id, provider) DO UPDATE SET
 		  instance_url = NULLIF($1,''), webhook_secret_enc = $2, default_template_id = NULLIF($3,'')::uuid, updated_at = now()`,
 		req.InstanceURL, sealed, req.DefaultTemplateID); err != nil {
 		log.Printf("sfWebhook DEBUG: %v", err)

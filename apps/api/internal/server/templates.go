@@ -23,22 +23,23 @@ type templatePhase struct {
 }
 
 type templateOut struct {
-	ID         string          `json:"id"`
-	Name       string          `json:"name"`
-	Version    string          `json:"version"`
-	Category   string          `json:"category"`
-	Phases     json.RawMessage `json:"phases"`
-	IsActive   bool            `json:"is_active"`
-	UsageCount int             `json:"usage_count"`
-	CreatedAt  string          `json:"created_at"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Category    string          `json:"category"`
+	Description string          `json:"description,omitempty"`
+	Phases      json.RawMessage `json:"phases"`
+	IsActive    bool            `json:"is_active"`
+	UsageCount  int             `json:"usage_count"`
+	CreatedAt   string          `json:"created_at"`
 }
 
-const templateCols = `id, name, version, category, phases, is_active, usage_count, created_at`
+const templateCols = `id, name, version, category, COALESCE(description,''), phases, is_active, usage_count, created_at`
 
 func scanTemplate(row pgx.Row) (templateOut, error) {
 	var t templateOut
 	var created time.Time
-	err := row.Scan(&t.ID, &t.Name, &t.Version, &t.Category, &t.Phases, &t.IsActive, &t.UsageCount, &created)
+	err := row.Scan(&t.ID, &t.Name, &t.Version, &t.Category, &t.Description, &t.Phases, &t.IsActive, &t.UsageCount, &created)
 	t.CreatedAt = created.UTC().Format(time.RFC3339)
 	return t, err
 }
@@ -77,9 +78,10 @@ func validatePhases(phases []templatePhase) string {
 
 func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name     string          `json:"name"`
-		Category string          `json:"category"`
-		Phases   []templatePhase `json:"phases"`
+		Name        string          `json:"name"`
+		Description string          `json:"description,omitempty"`
+		Category    string          `json:"category"`
+		Phases      []templatePhase `json:"phases"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		problem(w, http.StatusBadRequest, "malformed request body")
@@ -108,9 +110,9 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	t, err := scanTemplate(tx.QueryRow(r.Context(), `
-		INSERT INTO templates (workspace_id, name, version, category, phases)
-		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, $1, '1.0.0', $2, $3)
-		RETURNING `+templateCols, req.Name, req.Category, phasesJSON))
+		INSERT INTO templates (workspace_id, name, version, category, description, phases)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, $1, '1.0.0', $2, NULLIF($3,''), $4)
+		RETURNING `+templateCols, req.Name, req.Category, req.Description, phasesJSON))
 	if err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -211,8 +213,8 @@ func (s *Server) newTemplateVersion(w http.ResponseWriter, r *http.Request) {
 			UPDATE templates SET is_active = false, updated_at = now()
 			WHERE id = $1 AND is_active
 		)
-		INSERT INTO templates (workspace_id, name, version, category, phases, is_active)
-		SELECT workspace_id, name, $2, category, phases, true
+		INSERT INTO templates (workspace_id, name, version, category, description, phases, is_active)
+		SELECT workspace_id, name, $2, category, description, phases, true
 		FROM templates WHERE id = $1
 		RETURNING `+templateCols, id, next))
 	if err != nil {
