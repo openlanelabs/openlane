@@ -118,7 +118,7 @@ func (s *Server) createRateCard(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
 		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'rate_card', $1, 'user',
 		        NULLIF(current_setting('app.user_id', true), '')::uuid, 'rate_card.created', 'api', $2)`,
-		card.ID, `{"name":"`+card.Name+`"}`); err != nil {
+		card.ID, mustJSON(map[string]string{"name": card.Name})); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}

@@ -108,11 +108,12 @@ func (s *Server) decideTime(w http.ResponseWriter, r *http.Request, newStatus st
 		return
 	}
 
+	newValue, _ := json.Marshal(map[string]string{"status": newStatus, "reason": req.Reason})
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
 		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'time_entry', $1, 'user',
 		        NULLIF(current_setting('app.user_id', true), '')::uuid, $2, 'api', $3)`,
-		entryID, "time."+newStatus, `{"status":"`+newStatus+`","reason":"`+jsonSafe(req.Reason)+`"}`); err != nil {
+		entryID, "time."+newStatus, newValue); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -121,11 +122,6 @@ func (s *Server) decideTime(w http.ResponseWriter, r *http.Request, newStatus st
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func jsonSafe(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b[1 : len(b)-1])
 }
 
 func (s *Server) submitTime(w http.ResponseWriter, r *http.Request)  { s.decideTime(w, r, "submitted") }

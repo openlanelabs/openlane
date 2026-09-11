@@ -101,7 +101,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
 		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'user', NULLIF(current_setting('app.user_id', true), '')::uuid, 'project.created', 'api', $2)`,
-		p.ID, `{"name":"`+req.Name+`"}`); err != nil {
+		p.ID, mustJSON(map[string]string{"name": req.Name})); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
