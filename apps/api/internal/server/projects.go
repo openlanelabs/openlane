@@ -292,6 +292,8 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		  health = COALESCE($4, p.health),
 		  start_date = COALESCE($5::date, p.start_date),
 		  target_go_live = COALESCE($6::date, p.target_go_live),
+		  actual_go_live = CASE WHEN $3 = 'completed' AND p.actual_go_live IS NULL
+		                       THEN now()::date ELSE p.actual_go_live END,
 		  updated_at = now()
 		WHERE p.id = $1 AND p.deleted_at IS NULL
 		RETURNING id, customer_id, name, status, health, start_date::text, target_go_live::text, created_at`,

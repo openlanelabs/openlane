@@ -2423,6 +2423,23 @@ paths:
           schema: {type: string, format: uuid}
       responses:
         "204": {description: Cleared}
+  /v1/metrics:
+    get:
+      summary: Workspace acceptance metrics — TTV, portal open rate, p95 latency
+      operationId: getMetrics
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Metrics rollup
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Metrics"}
 components:
   parameters:
     IdPathParam:
@@ -2631,6 +2648,31 @@ components:
         id:
           type: string
           format: uuid
+    Metrics:
+      type: object
+      description: P0 acceptance metrics (§588) — TTV, portal open rate, latency
+      properties:
+        ttv:
+          type: object
+          properties:
+            count: {type: integer}
+            avg_days: {type: number}
+            min_days: {type: number}
+            max_days: {type: number}
+        portal_open_rate:
+          type: object
+          properties:
+            active_links: {type: integer}
+            opened: {type: integer}
+            rate: {type: number}
+        api_latency:
+          type: object
+          properties:
+            p50_ms: {type: number}
+            p95_ms: {type: number}
+            p99_ms: {type: number}
+            requests: {type: integer, format: int64}
+            errors: {type: integer, format: int64}
         project_id:
           type: string
           format: uuid

@@ -36,7 +36,7 @@ func ConfigFromEnv() (addr, dsn, staffToken string) {
 }
 
 // New builds the mux; caller closes the pool.
-func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.Pool, error) {
+func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Pool, error) {
 	// fail closed: prod profile refuses to boot with dev escape hatches
 	if err := validateProdConfig(); err != nil {
 		return nil, nil, err
@@ -153,7 +153,13 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.HandleFunc("POST /v1/portal/{token}/forms/{id}/submit", s.portal(s.submitPortalForm))
 	mux.HandleFunc("GET /v1/portal/{token}/files/{file_id}/url", s.portal(s.portalFileURL))
 
-	return mux, pool, nil
+	mux.Handle("GET /v1/metrics", authed(s.getMetrics))
+	// Prometheus scrape endpoint — same auth shape as staff (scrapers send
+	// the bearer); no portal route exists (§207: portal never sees ops data).
+	mux.Handle("GET /metrics", authed(s.prometheus))
+
+	// metrics middleware wraps everything (§588 p95) — returns an http.Handler
+	return recordMetrics(mux), pool, nil
 }
 
 // ---- helpers ----
