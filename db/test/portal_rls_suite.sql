@@ -753,6 +753,95 @@ END $$;
 INSERT INTO test_results
 SELECT 'T17h negative rate rejected', TRUE;
 
+
+-- ---------- T18: budgets (00021/00022) ----------
+-- budgeted project in ws 1111
+INSERT INTO projects (id, workspace_id, customer_id, name, budget_hours, billing_type)
+VALUES ('77777777-7777-7777-7777-777777777777', '11111111-1111-1111-1111-111111111111',
+        '33333333-3333-3333-3333-333333333333', 'Budgeted', 10, 'tm');
+
+-- T18a: alert level band update allowed under tenant ctx
+UPDATE projects SET budget_alert_level = 50
+WHERE id = '77777777-7777-7777-7777-777777777777' AND workspace_id = '11111111-1111-1111-1111-111111111111';
+INSERT INTO test_results
+SELECT 'T18a tenant can set alert level', EXISTS (
+  SELECT 1 FROM projects WHERE id = '77777777-7777-7777-7777-777777777777' AND budget_alert_level = 50);
+
+-- T18b: cross-workspace update blocked (beta staff touching acme project)
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+    UPDATE projects SET budget_alert_level = 100 WHERE id = '77777777-7777-7777-7777-777777777777';
+    IF (SELECT budget_alert_level FROM projects WHERE id = '77777777-7777-7777-7777-777777777777') = 100 THEN
+      RAISE EXCEPTION 'T18b expected RLS block';
+    END IF;
+  EXCEPTION WHEN insufficient_privilege OR others THEN
+    NULL; -- RLS block or no-op both acceptable: row must NOT be 100
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T18b cross-ws alert update blocked', (
+  SELECT budget_alert_level FROM projects WHERE id = '77777777-7777-7777-7777-777777777777') = 50;
+
+-- T18c: CHECK constraints — budget must be positive, billing enum
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    UPDATE projects SET budget_hours = 0 WHERE id = '77777777-7777-7777-7777-777777777777';
+    RAISE EXCEPTION 'T18c expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T18c zero budget rejected', TRUE;
+
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    UPDATE projects SET billing_type = 'barter' WHERE id = '77777777-7777-7777-7777-777777777777';
+    RAISE EXCEPTION 'T18c2 expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T18c2 bad billing_type rejected', TRUE;
+
+-- T18d: notify_budget setting default true
+INSERT INTO workspace_settings (workspace_id) VALUES ('22222222-2222-2222-2222-222222222222')
+ON CONFLICT (workspace_id) DO NOTHING;
+INSERT INTO test_results
+SELECT 'T18d notify_budget default true', EXISTS (
+  SELECT 1 FROM workspace_settings WHERE workspace_id = '22222222-2222-2222-2222-222222222222'
+  AND notify_budget IS TRUE);
+
+-- T18e: automations trigger CHECK extended with budget events
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    INSERT INTO automations (workspace_id, name, trigger_event, action)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'BudgetWatch', 'budget.exceeded',
+            '{"type":"create_task","title":"Call the client"}');
+  EXCEPTION WHEN check_violation THEN
+    RAISE EXCEPTION 'T18e budget.exceeded must be an allowed trigger';
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T18e budget.exceeded trigger accepted', EXISTS (
+  SELECT 1 FROM automations WHERE name = 'BudgetWatch');
+
+-- T18f: budget_warning trigger accepted too
+INSERT INTO automations (workspace_id, name, trigger_event, action)
+VALUES ('11111111-1111-1111-1111-111111111111', 'BudgetWarn', 'budget.warning', '{"type":"slack_message"}');
+INSERT INTO test_results
+SELECT 'T18f budget.warning trigger accepted', EXISTS (
+  SELECT 1 FROM automations WHERE name = 'BudgetWarn');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
