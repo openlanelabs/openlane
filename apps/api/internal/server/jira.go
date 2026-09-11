@@ -329,7 +329,7 @@ func (s *Server) jiraValidateIssue(ctx context.Context, instanceURL, patEnc, iss
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", "", errors.New("jira api status " + resp.Status)
 	}
