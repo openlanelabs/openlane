@@ -2586,13 +2586,13 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
   /calendar/preview:
     post:
-      summary: Preview a calendar ICS import (dry run)
+      summary: Preview a calendar import (dry run on pasted ICS)
       operationId: calendarPreview
       description: |
-        Fetches an ICS feed (http/https, 2MB cap, 10s timeout, private
-        hosts blocked) and returns the events that WOULD import: past
-        week only, 5min–12h spans (>12h capped). The one-click convert
-        UX (§306): preview, then confirm.
+        Parses pasted ICS content (the calendar export) and returns the
+        events that WOULD import: past week only, 5min–12h spans
+        (>12h capped). No network on this path — the feed URL fetch
+        runs queued in the worker.
       security:
         - bearerAuth: []
       requestBody:
@@ -2601,9 +2601,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [ics_url]
+              required: [ics_text]
               properties:
-                ics_url:
+                ics_text:
                   type: string
       responses:
         "200":
@@ -2628,12 +2628,14 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
   /calendar/import:
     post:
-      summary: Import a calendar ICS feed as draft time entries
+      summary: Queue a calendar ICS feed import
       operationId: calendarImport
       description: |
-        Idempotent by calendar UID (partial unique index on refs) —
-        re-importing the same feed inserts nothing (§311 dedupe edge).
-        Entries land as drafts; approval flow applies as usual.
+        Enqueues the fetch as a river job — user URLs fetch in the
+        worker (the platform's SSRF stance, same as SF/HS/slack).
+        Idempotent by calendar UID (partial unique index on refs);
+        re-importing the same feed inserts nothing (§311). Counts land
+        in the audit log (calendar.imported).
       security:
         - bearerAuth: []
       requestBody:
@@ -2650,15 +2652,14 @@ paths:
                   type: string
                   format: uuid
       responses:
-        "200":
-          description: Import result
+        "202":
+          description: Queued
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  imported: {type: integer}
-                  skipped: {type: integer, description: Already-imported UIDs}
+                  queued: {type: boolean}
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /projects/{id}/approvals:

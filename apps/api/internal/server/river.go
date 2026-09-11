@@ -61,6 +61,18 @@ type JiraStatusPushArgs struct {
 
 func (JiraStatusPushArgs) Kind() string { return "jira_status_push" }
 
+// CalendarImportArgs: ICS feed fetch + draft-entry insert, run in the
+// worker (user URLs fetch outside request handlers per the platform's
+// SSRF stance — same as SF/HS/slack).
+type CalendarImportArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	ICSURL      string `json:"ics_url"`
+	ProjectID   string `json:"project_id"`
+	UserID      string `json:"user_id"`
+}
+
+func (CalendarImportArgs) Kind() string { return "calendar_import" }
+
 // newRiverClient: enqueue-only client (no Start()) backed by the pool.
 // Workers live in apps/worker; the API only produces jobs.
 func newRiverClient(pool *pgxpool.Pool) (*river.Client[pgx.Tx], error) {

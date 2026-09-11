@@ -3,23 +3,34 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // calTestStack: fresh stack + local ICS feed server (public-ish: tests
 // run with the loopback allowance only for stub? — no: fetchICS blocks
 // loopback. Tests use OPENLANE_CAL_ALLOW_ANY? No — the guard is
 // hardcoded. So the stack monkey-patches via env? Simplest: tests run
-// the parse path through calendarEvents with a stub via the handler by
-// allowing loopback under test env — reuse the OPENLANE_SLACK_ALLOW_ANY
-// convention: OPENLANE_CAL_ALLOW_ANY=1.)
-func calICSFeed(t *testing.T) *httptest.Server {
-	t.Helper()
+func TestCalendarPreviewAndImport(t *testing.T) {
+	t.Setenv("OPENLANE_CAL_ALLOW_ANY", "1")
+	_, _, h, _ := timeTestStack(t)
+	_, _, access := devLogin(h)
+
+	// preview: pasted ICS text — dry run, sync, no network
+	var prev struct {
+		Events []struct {
+			UID     string `json:"uid"`
+			Minutes int    `json:"minutes"`
+		} `json:"events"`
+		Count int `json:"count"`
+	}
 	now := time.Now().UTC()
 	fmtICS := func(d time.Duration) string {
 		return now.Add(d).UTC().Format("20060102T150405Z")
@@ -52,29 +63,9 @@ func calICSFeed(t *testing.T) *httptest.Server {
 		"END:VEVENT",
 		"END:VCALENDAR",
 	}, "\r\n")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(ics))
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
 
-func TestCalendarPreviewAndImport(t *testing.T) {
-	t.Setenv("OPENLANE_CAL_ALLOW_ANY", "1")
-	_, _, h, _ := timeTestStack(t) // seeds asha + membership + task + projA
-	_, _, access := devLogin(h)
-	feed := calICSFeed(t)
-
-	// preview: dry run — meet-1 + meet-4 (capped), future + short skipped
-	var prev struct {
-		Events []struct {
-			UID     string `json:"uid"`
-			Minutes int    `json:"minutes"`
-		} `json:"events"`
-		Count int `json:"count"`
-	}
 	if code, body := h.doJWT("POST", "/v1/calendar/preview", map[string]any{
-		"ics_url": feed.URL,
+		"ics_text": ics,
 	}, access); code != http.StatusOK {
 		t.Fatalf("preview = %d %s", code, body)
 	} else if err := json.Unmarshal(body, &prev); err != nil {
@@ -91,25 +82,50 @@ func TestCalendarPreviewAndImport(t *testing.T) {
 		t.Fatalf("minutes = %v", minutes)
 	}
 
-	// import → 2 drafts
+	// import: 202 queued as a river job (fetch happens in the worker)
+	admin := adminDSN(t)
+	ap, err := pgxpool.New(context.Background(), admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ap.Close() })
+	if err := EnsureRiver(context.Background(), ap); err != nil {
+		t.Fatalf("EnsureRiver: %v", err)
+	}
+	if _, err := ap.Exec(context.Background(), "DELETE FROM river_job"); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	t.Setenv("OPENLANE_INTEGRATION_KEY", base64.StdEncoding.EncodeToString(key))
+
 	if code, body := h.doJWT("POST", "/v1/calendar/import", map[string]any{
-		"ics_url": feed.URL, "project_id": projA,
-	}, access); code != http.StatusOK || !strings.Contains(string(body), `"imported":2`) {
+		"ics_url": "https://calendar.example/feed.ics", "project_id": projA,
+	}, access); code != http.StatusAccepted || !strings.Contains(string(body), "queued") {
 		t.Fatalf("import = %d %s", code, body)
 	}
 
-	// re-import → 0 imported (uid dedupe), 2 skipped
-	if code, body := h.doJWT("POST", "/v1/calendar/import", map[string]any{
-		"ics_url": feed.URL, "project_id": projA,
-	}, access); code != http.StatusOK || !strings.Contains(string(body), `"imported":0`) {
-		t.Fatalf("re-import = %d %s", code, body)
+	var kind, argsJSON string
+	if err := ap.QueryRow(context.Background(),
+		`SELECT kind, args::text FROM river_job WHERE kind = 'calendar_import' LIMIT 1`).Scan(&kind, &argsJSON); err != nil {
+		t.Fatalf("no calendar_import job: %v", err)
+	}
+	if !strings.Contains(argsJSON, "feed.ics") || !strings.Contains(argsJSON, projA) {
+		t.Fatalf("job args = %s", argsJSON)
 	}
 
-	// foreign project → 404
+	// bad scheme → 400 (fast validation, no enqueue)
 	if code, _ := h.doJWT("POST", "/v1/calendar/import", map[string]any{
-		"ics_url": feed.URL, "project_id": "99999999-9999-9999-9999-999999999999",
-	}, access); code != http.StatusOK {
-		// import w/ unknown project inserts nothing: 0 imported (no oracle)
-		// — the handler treats it as 0 events. Accept 200/0 too:
+		"ics_url": "ftp://x", "project_id": projA,
+	}, access); code != http.StatusBadRequest {
+		t.Fatalf("ftp scheme = %d", code)
+	}
+	// private host → 400
+	if code, _ := h.doJWT("POST", "/v1/calendar/import", map[string]any{
+		"ics_url": "http://127.0.0.1:9/feed.ics", "project_id": projA,
+	}, access); code != http.StatusBadRequest {
+		t.Fatalf("private host = %d", code)
 	}
 }
