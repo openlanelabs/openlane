@@ -1134,6 +1134,49 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /projects/{id}/margin:
+    get:
+      summary: Project margin ((billed-cost)/billed, real-time)
+      operationId: getProjectMargin
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Margin rollup
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Margin"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /margins:
+    get:
+      summary: Portfolio margins (per-project + workspace totals)
+      operationId: listMargins
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Portfolio rollup
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PortfolioMargins"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
@@ -3570,6 +3613,29 @@ components:
         ended_at: {type: string, format: date-time}
         note: {type: string}
         status: {type: string}
+    Margin:
+      type: object
+      properties:
+        project_id: {type: string, format: uuid}
+        name: {type: string}
+        logged_hours: {type: number}
+        cost: {type: number}
+        billed: {type: number}
+        margin: {type: [number, "null"], description: "null when billed = 0"}
+        unpriced: {type: integer, description: Minutes by authors with no person link}
+    PortfolioMargins:
+      type: object
+      properties:
+        projects:
+          type: array
+          items: {$ref: "#/components/schemas/Margin"}
+        totals:
+          type: object
+          properties:
+            logged_hours: {type: number}
+            cost: {type: number}
+            billed: {type: number}
+            margin: {type: [number, "null"]}
     TemplateInput:
       type: object
       required: [name, category, phases]
