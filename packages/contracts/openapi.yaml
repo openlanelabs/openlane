@@ -946,6 +946,138 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /time/pending:
+    get:
+      summary: Manager queue of submitted time entries
+      operationId: listPendingTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Submitted entries, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/TimeEntrySummary"}
+        "403":
+          description: Manager role required
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /time/{id}/submit:
+    post:
+      summary: Submit own draft (or resubmit rejected) entry
+      operationId: submitTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Submitted
+        "400":
+          description: Invalid state
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: Not the author
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /time/{id}/approve:
+    post:
+      summary: Approve a submitted entry (manager+, not own)
+      operationId: approveTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Approved
+        "400":
+          description: Invalid state
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: Manager role required / cannot approve own time
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /time/{id}/reject:
+    post:
+      summary: Reject a submitted entry with a reason
+      operationId: rejectTime
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: {type: string, minLength: 1, maxLength: 500}
+      responses:
+        "204":
+          description: Rejected
+        "400":
+          description: Invalid state / reason required
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: Manager role required / cannot reject own time
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
@@ -3370,6 +3502,18 @@ components:
         loggable_minutes: {type: number, description: Nominal capacity × workdays}
         utilization: {type: [number, "null"]}
         weeks: {type: number}
+    TimeEntrySummary:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        task_id: {type: [string, "null"], format: uuid}
+        user_id: {type: string, format: uuid}
+        minutes: {type: integer}
+        started_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+        note: {type: string}
+        status: {type: string}
     TemplateInput:
       type: object
       required: [name, category, phases]
