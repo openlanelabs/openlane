@@ -318,7 +318,7 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if t.Status == "done" && cur.Status != "done" {
 		s.notifyEvent(ctx, workspaceFromCtx(ctx), "task.completed",
-			"✅ Task completed: "+t.Title)
+			"✅ Task completed: "+t.Title, t.ID)
 	}
 	writeJSON(w, http.StatusOK, t)
 }

@@ -112,7 +112,7 @@ func (s *Server) submitPortalCSAT(ctx context.Context, tx pgx.Tx, w http.Respons
 	if escalated {
 		text += " — escalation task opened"
 	}
-	s.notifyEvent(context.WithoutCancel(ctx), sess.WorkspaceID, "csat.submitted", text)
+	s.notifyEvent(context.WithoutCancel(ctx), sess.WorkspaceID, "csat.submitted", text, req.ApprovalID)
 	out := map[string]any{"id": id, "score": req.Score, "emoji": emoji(req.Score), "escalated": escalated}
 	writeJSON(w, http.StatusCreated, out)
 	return 0, nil

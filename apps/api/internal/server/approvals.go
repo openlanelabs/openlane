@@ -82,7 +82,7 @@ func (s *Server) createApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.notifyEvent(ctx, workspaceFromCtx(ctx), "approval.requested",
-		"🔔 Approval requested: "+req.Title)
+		"🔔 Approval requested: "+req.Title, id)
 	writeJSON(w, http.StatusCreated, approvalOut{
 		ID: id, ProjectID: r.PathValue("id"), Title: req.Title,
 		Description: req.Description, Status: "pending",
@@ -232,7 +232,7 @@ func (s *Server) decidePortalApproval(ctx context.Context, tx pgx.Tx, w http.Res
 		verdict = "approved"
 	}
 	s.notifyEvent(ctx, sess.WorkspaceID, "approval.decided",
-		"✍️ Customer "+verdict+": "+sess.ProjectName)
+		"✍️ Customer "+verdict+": "+sess.ProjectName, id)
 	writeJSON(w, http.StatusOK, map[string]string{"status": req.Decision, "id": id})
 	return 0, nil
 }

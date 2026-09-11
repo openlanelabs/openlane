@@ -32,11 +32,17 @@ func slackAllowed(raw string) bool {
 // connection + sets the workspace ctx (callers may run under portal or
 // staff scopes — this path is self-contained). Delivery is a goroutine:
 // the request never waits on Slack.
-func (s *Server) notifyEvent(ctx context.Context, workspaceID, event, text string) {
+// notifyEvent fires the event if the workspace enabled it, then runs
+// matching automations (settings gate does NOT gate automations — a
+// quiet Slack config still triggers rules). Variadic ref: the id of
+// the entity behind the event (task, approval...), used for run
+// history and condition matching.
+func (s *Server) notifyEvent(ctx context.Context, workspaceID, event, text string, ref ...string) {
 	if workspaceID == "" {
 		return
 	}
 	cctx := context.WithoutCancel(ctx)
+	defer func() { s.fireAutomations(cctx, workspaceID, event, ref...) }()
 	conn, err := s.pool.Acquire(cctx)
 	if err != nil {
 		return

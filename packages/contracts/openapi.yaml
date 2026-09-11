@@ -1170,6 +1170,164 @@ paths:
                 items:
                   $ref: "#/components/schemas/TimeEntry"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /automations:
+    post:
+      summary: Create an automation rule (unlimited runs)
+      description: >
+        P0 triggers: the events the API emits (task.completed,
+        approval.requested/decided, csat.submitted, project.created*).
+        P0 actions: slack_message (workspace webhook) and create_task.
+        Condition: optional project_id filter.
+      operationId: createAutomation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, trigger_event, action]
+              properties:
+                name:
+                  type: string
+                trigger_event:
+                  type: string
+                  enum: [task.completed, approval.requested, approval.decided,
+                         csat.submitted, project.created, project.created_from_template]
+                condition:
+                  type: object
+                  properties:
+                    project_id:
+                      type: string
+                      format: uuid
+                action:
+                  oneOf:
+                    - type: object
+                      required: [type]
+                      properties:
+                        type:
+                          type: string
+                          enum: [slack_message]
+                    - type: object
+                      required: [type, project_id, title]
+                      properties:
+                        type:
+                          type: string
+                          enum: [create_task]
+                        project_id:
+                          type: string
+                          format: uuid
+                        title:
+                          type: string
+                        customer_visible:
+                          type: boolean
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Automation"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      summary: List automation rules
+      operationId: listAutomations
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Automation"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /automations/{id}:
+    patch:
+      summary: Toggle a rule active/inactive
+      operationId: patchAutomation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_active]
+              properties:
+                is_active:
+                  type: boolean
+      responses:
+        "200": {description: Updated}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Soft-delete a rule
+      operationId: deleteAutomation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204": {description: Deleted}
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /automations/{id}/runs:
+    get:
+      summary: Run history (unlimited, §408)
+      operationId: listAutomationRuns
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Runs (latest 100)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    event:
+                      type: string
+                    event_ref:
+                      type: string
+                    status:
+                      type: string
+                      enum: [completed, failed, skipped]
+                    detail:
+                      type: string
+                    created_at:
+                      type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /search:
     get:
       summary: Global search (projects, tasks, docs, files)
@@ -2188,6 +2346,24 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    Automation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        trigger_event:
+          type: string
+        condition:
+          type: object
+        action:
+          type: object
+        is_active:
+          type: boolean
+        created_at:
+          type: string
     SearchHit:
       type: object
       properties:
