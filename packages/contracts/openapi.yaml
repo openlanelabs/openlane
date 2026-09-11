@@ -2584,6 +2584,83 @@ paths:
                 items:
                   $ref: "#/components/schemas/ProjectNote"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /calendar/preview:
+    post:
+      summary: Preview a calendar ICS import (dry run)
+      operationId: calendarPreview
+      description: |
+        Fetches an ICS feed (http/https, 2MB cap, 10s timeout, private
+        hosts blocked) and returns the events that WOULD import: past
+        week only, 5min–12h spans (>12h capped). The one-click convert
+        UX (§306): preview, then confirm.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ics_url]
+              properties:
+                ics_url:
+                  type: string
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: {type: integer}
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        uid: {type: string}
+                        summary: {type: string}
+                        started_at: {type: string, format: date-time}
+                        ended_at: {type: string, format: date-time}
+                        minutes: {type: integer}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /calendar/import:
+    post:
+      summary: Import a calendar ICS feed as draft time entries
+      operationId: calendarImport
+      description: |
+        Idempotent by calendar UID (partial unique index on refs) —
+        re-importing the same feed inserts nothing (§311 dedupe edge).
+        Entries land as drafts; approval flow applies as usual.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ics_url, project_id]
+              properties:
+                ics_url:
+                  type: string
+                project_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Import result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported: {type: integer}
+                  skipped: {type: integer, description: Already-imported UIDs}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /projects/{id}/approvals:
     post:
       summary: Request an approval from the customer
