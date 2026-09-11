@@ -278,7 +278,7 @@ func (w *TimeReminderWorker) Work(ctx context.Context, job *river.Job[TimeRemind
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(time.Duration(rand.Intn(60)) * time.Second):
+	case <-time.After(time.Duration(rand.Intn(60)) * time.Second): //nolint:gosec // jitter, not crypto
 	}
 
 	rows, err := w.pool.Query(ctx, `SELECT workspace_id::text, slack_url, names, n FROM time_reminder_digest()`)
