@@ -49,6 +49,18 @@ type HSProjectCreateArgs struct {
 
 func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
 
+// JiraStatusPushArgs: task status change -> Jira transition (outbound
+// half of §336 two-way sync). Carries no secret — the worker decrypts
+// the PAT via OPENLANE_INTEGRATION_KEY like the API does.
+type JiraStatusPushArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	TaskID      string `json:"task_id"`
+	IssueKey    string `json:"issue_key"`
+	Status      string `json:"status"`
+}
+
+func (JiraStatusPushArgs) Kind() string { return "jira_status_push" }
+
 // newRiverClient: enqueue-only client (no Start()) backed by the pool.
 // Workers live in apps/worker; the API only produces jobs.
 func newRiverClient(pool *pgxpool.Pool) (*river.Client[pgx.Tx], error) {

@@ -141,6 +141,11 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("GET /v1/integrations/hubspot", authed(s.getHSSettings))
 	mux.HandleFunc("POST /v1/integrations/hubspot/webhook", s.hsWebhook)
 	mux.HandleFunc("POST /v1/integrations/salesforce/webhook", s.sfWebhook)
+	mux.Handle("PUT /v1/integrations/jira", authed(s.putJiraSettings))
+	mux.Handle("GET /v1/integrations/jira", authed(s.getJiraSettings))
+	mux.HandleFunc("POST /v1/integrations/jira/webhook", s.jiraWebhook)
+	mux.Handle("POST /v1/tasks/{id}/link", authed(s.linkTask))
+	mux.Handle("DELETE /v1/tasks/{id}/link", authed(s.unlinkTask))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))

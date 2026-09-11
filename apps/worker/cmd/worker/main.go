@@ -12,13 +12,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,6 +63,185 @@ type HSProjectCreateArgs struct {
 }
 
 func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
+
+// JiraStatusPushArgs mirrors the api package struct (JSON coupling).
+type JiraStatusPushArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	TaskID      string `json:"task_id"`
+	IssueKey    string `json:"issue_key"`
+	Status      string `json:"status"`
+}
+
+func (JiraStatusPushArgs) Kind() string { return "jira_status_push" }
+
+// jiraSecretAEAD — duplicated from api/server (apps couple via job JSON,
+// not imports; OPENLANE_INTEGRATION_KEY is the shared secret).
+func jiraSecretAEAD() (cipher.AEAD, error) {
+	raw := os.Getenv("OPENLANE_INTEGRATION_KEY")
+	if raw == "" {
+		return nil, errors.New("OPENLANE_INTEGRATION_KEY not set")
+	}
+	key, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(key) != 32 {
+		return nil, errors.New("OPENLANE_INTEGRATION_KEY must be 32 bytes, base64")
+	}
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(blk)
+}
+
+func openJiraSecret(aead cipher.AEAD, sealed []byte) (string, error) {
+	ns := aead.NonceSize()
+	if len(sealed) < ns {
+		return "", errors.New("sealed secret too short")
+	}
+	pt, err := aead.Open(nil, sealed[:ns], sealed[ns:], nil)
+	if err != nil {
+		return "", err
+	}
+	return string(pt), nil
+}
+
+// JiraStatusPushWorker: outbound half of §336 — task status → Jira
+// transition. Loop guard: skip when last_synced_at >= task updated_at
+// (the change came FROM jira).
+type JiraStatusPushWorker struct {
+	river.WorkerDefaults[JiraStatusPushArgs]
+	pool *pgxpool.Pool
+}
+
+var jiraTransitionNames = map[string][]string{
+	"in_progress": {"In Progress", "Start Progress"},
+	"done":        {"Done", "Close Issue"},
+	"todo":        {"To Do", "Reopen"},
+}
+
+func (w *JiraStatusPushWorker) Work(ctx context.Context, job *river.Job[JiraStatusPushArgs]) error {
+	// one tx: set_config is tx-scoped (house rule) — every query below
+	// rides the same connection or the RLS scope evaporates.
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.workspace_id', $1, true)", job.Args.WorkspaceID); err != nil {
+		return err
+	}
+
+	var instanceURL, patB64 string
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(instance_url,''), COALESCE(external_refs->>'pat_enc','')
+		FROM workspace_integrations WHERE provider = 'jira'`).Scan(&instanceURL, &patB64); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // unconfigured between enqueue and run
+		}
+		return err
+	}
+	if instanceURL == "" || patB64 == "" {
+		return nil // PAT never set: inbound-only mode
+	}
+	patSealed, err := base64.StdEncoding.DecodeString(patB64)
+	if err != nil {
+		return err
+	}
+	// loop guard: change originated in jira
+	var lastSync, taskUpdated time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(tl.last_synced_at, to_timestamp(0)), t.updated_at
+		FROM tasks t JOIN task_links tl ON tl.task_id = t.id AND tl.provider = 'jira'
+		WHERE t.id = $1`, job.Args.TaskID).Scan(&lastSync, &taskUpdated); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // link removed since enqueue
+		}
+		return err
+	}
+	if !lastSync.Before(taskUpdated) {
+		return nil
+	}
+
+	aead, err := jiraSecretAEAD()
+	if err != nil {
+		return err
+	}
+	pat, err := openJiraSecret(aead, patSealed)
+	if err != nil {
+		return err
+	}
+	base := strings.TrimSuffix(instanceURL, "/")
+	names, ok := jiraTransitionNames[job.Args.Status]
+	if !ok {
+		return nil
+	}
+
+	// list transitions, find by name
+	req, err := http.NewRequestWithContext(ctx, "GET", base+"/rest/api/3/issue/"+job.Args.IssueKey+"/transitions", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Accept", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("jira transitions %d", res.StatusCode)
+	}
+	var tr struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return err
+	}
+	transitionID := ""
+	for _, t := range tr.Transitions {
+		for _, want := range names {
+			if strings.EqualFold(t.Name, want) {
+				transitionID = t.ID
+			}
+		}
+	}
+	if transitionID == "" {
+		return nil // no matching transition available
+	}
+
+	post, err := http.NewRequestWithContext(ctx, "POST", base+"/rest/api/3/issue/"+job.Args.IssueKey+"/transitions",
+		bytes.NewReader([]byte(`{"transition":{"id":`+jsonString(transitionID)+`}}`)))
+	if err != nil {
+		return err
+	}
+	post.Header.Set("Authorization", "Bearer "+pat)
+	post.Header.Set("Content-Type", "application/json")
+	pres, err := http.DefaultClient.Do(post)
+	if err != nil {
+		return err
+	}
+	_ = pres.Body.Close()
+	if pres.StatusCode != http.StatusNoContent && pres.StatusCode != http.StatusOK {
+		return fmt.Errorf("jira transition %d", pres.StatusCode)
+	}
+
+	// audit + mark synced — same tx, workspace-scoped
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source, new_value)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'task', $1, 'system', NULL,
+		        'task.jira_sync_out', 'api', $2)`,
+		job.Args.TaskID, []byte(`{"status":`+jsonString(job.Args.Status)+`}`)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE task_links SET last_synced_at = now() WHERE task_id = $1 AND provider = 'jira'`, job.Args.TaskID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
 
 type SlackNotifyWorker struct {
 	river.WorkerDefaults[SlackNotifyArgs]
@@ -304,6 +488,7 @@ func main() {
 	river.AddWorker(workers, NewSlackNotifyWorker())
 	river.AddWorker(workers, &SFProjectCreateWorker{pool: pool, river: rc})
 	river.AddWorker(workers, &HSProjectCreateWorker{pool: pool, river: rc})
+	river.AddWorker(workers, &JiraStatusPushWorker{pool: pool})
 
 	rc, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{

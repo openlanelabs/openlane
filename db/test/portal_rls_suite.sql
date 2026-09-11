@@ -1045,6 +1045,55 @@ INSERT INTO test_results
 SELECT 'T21c cross-ws status change blocked', (
   SELECT status FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001') = 'submitted';
 
+-- ---------- T22: jira task links (00026) ----------
+
+-- T22a: link a task in ws A, read it back
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO task_links (workspace_id, task_id, provider, issue_key)
+SELECT '11111111-1111-1111-1111-111111111111', t.id, 'jira', 'ACME-7'
+FROM tasks t WHERE t.workspace_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+INSERT INTO test_results
+SELECT 'T22a link roundtrip', EXISTS (
+  SELECT 1 FROM task_links WHERE issue_key = 'ACME-7' AND provider = 'jira');
+
+-- T22b: cross-ws read blocked
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T22b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM task_links WHERE issue_key = 'ACME-7');
+
+-- T22c: cross-ws DELETE blocked
+DO $$
+BEGIN
+  BEGIN
+    DELETE FROM task_links WHERE issue_key = 'ACME-7';
+  EXCEPTION WHEN insufficient_privilege OR others THEN
+    NULL;
+  END;
+END $$;
+-- verify from ws A scope: row must still exist
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T22c cross-ws delete blocked', EXISTS (
+  SELECT 1 FROM task_links WHERE issue_key = 'ACME-7');
+
+-- T22d: UNIQUE(task_id, provider) — second link is an upsert conflict for the app; direct dup insert must fail
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO task_links (workspace_id, task_id, provider, issue_key)
+    SELECT '11111111-1111-1111-1111-111111111111', task_id, 'jira', 'ACME-8'
+    FROM task_links WHERE issue_key = 'ACME-7';
+    RAISE EXCEPTION 'T22d expected unique violation';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T22d unique (task_id, provider)', EXISTS (
+  SELECT 1 FROM task_links WHERE issue_key = 'ACME-7');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
