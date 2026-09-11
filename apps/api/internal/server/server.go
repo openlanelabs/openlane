@@ -125,6 +125,9 @@ func New(ctx context.Context, dsn, staffToken string) (*http.ServeMux, *pgxpool.
 	mux.Handle("GET /v1/me/time", authed(s.listMyTime))
 	mux.Handle("PUT /v1/integrations/salesforce", authed(s.putSFSettings))
 	mux.Handle("GET /v1/integrations/salesforce", authed(s.getSFSettings))
+	mux.Handle("PUT /v1/integrations/hubspot", authed(s.putHSSettings))
+	mux.Handle("GET /v1/integrations/hubspot", authed(s.getHSSettings))
+	mux.HandleFunc("POST /v1/integrations/hubspot/webhook", s.hsWebhook)
 	mux.HandleFunc("POST /v1/integrations/salesforce/webhook", s.sfWebhook)
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))

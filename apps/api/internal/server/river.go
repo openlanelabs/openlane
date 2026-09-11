@@ -37,6 +37,18 @@ type SFProjectCreateArgs struct {
 
 func (SFProjectCreateArgs) Kind() string { return "sf_project_create" }
 
+// HSProjectCreateArgs: closed-won Deal -> project (+ template).
+type HSProjectCreateArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	DealID      string `json:"deal_id"`
+	DealName    string `json:"deal_name"`
+	Company     string `json:"company"`
+	Amount      string `json:"amount,omitempty"`
+	CloseDate   string `json:"close_date,omitempty"`
+}
+
+func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
+
 // newRiverClient: enqueue-only client (no Start()) backed by the pool.
 // Workers live in apps/worker; the API only produces jobs.
 func newRiverClient(pool *pgxpool.Pool) (*river.Client[pgx.Tx], error) {

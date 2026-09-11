@@ -46,6 +46,19 @@ type SFProjectCreateArgs struct {
 
 func (SFProjectCreateArgs) Kind() string { return "sf_project_create" }
 
+// HSProjectCreateArgs mirrors the api package struct (JSON coupling —
+// kind name is the contract, #55).
+type HSProjectCreateArgs struct {
+	WorkspaceID string `json:"workspace_id"`
+	DealID      string `json:"deal_id"`
+	DealName    string `json:"deal_name"`
+	Company     string `json:"company"`
+	Amount      string `json:"amount,omitempty"`
+	CloseDate   string `json:"close_date,omitempty"`
+}
+
+func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
+
 type SlackNotifyWorker struct {
 	river.WorkerDefaults[SlackNotifyArgs]
 	client *http.Client
@@ -101,7 +114,7 @@ func (w *SFProjectCreateWorker) Work(ctx context.Context, job *river.Job[SFProje
 	var accountName string
 	if err := tx.QueryRow(ctx, `
 		SELECT default_template_id, $2 FROM workspace_integrations
-		WHERE workspace_id = $1`, job.Args.WorkspaceID, job.Args.AccountName).
+		WHERE workspace_id = $1 AND provider = 'salesforce' `, job.Args.WorkspaceID, job.Args.AccountName).
 		Scan(&templateID, &accountName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil // integration removed between enqueue and run — drop
@@ -131,22 +144,23 @@ func (w *SFProjectCreateWorker) Work(ctx context.Context, job *river.Job[SFProje
 	}
 
 	name := job.Args.AccountName + " — onboarding"
+	refs := `{"salesforce_opportunity_id":"` + job.Args.OpportunityID + `"}`
 	var id string
 	if templateID != nil && *templateID != "" {
 		// from template: copy name/description skeleton (P0: template body
 		// copy = templates.name/description; task-tree copy is P1)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO projects (workspace_id, customer_id, name, description, status)
-			SELECT workspace_id, $2::uuid, $3 || ' — ' || name, description, 'active'
+			INSERT INTO projects (workspace_id, customer_id, name, description, external_refs, status)
+			SELECT workspace_id, $2::uuid, $3 || ' — ' || name, description, $4::jsonb, 'active'
 			FROM templates WHERE id = $1::uuid
-			RETURNING id`, *templateID, customerID, name).Scan(&id); err != nil {
+			RETURNING id`, *templateID, customerID, name, refs).Scan(&id); err != nil {
 			return err
 		}
 	} else {
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO projects (workspace_id, customer_id, name, status)
-			VALUES ($1::uuid, $2::uuid, $3, 'active') RETURNING id`,
-			job.Args.WorkspaceID, customerID, name).Scan(&id); err != nil {
+			INSERT INTO projects (workspace_id, customer_id, name, external_refs, status)
+			VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, 'active') RETURNING id`,
+			job.Args.WorkspaceID, customerID, name, refs).Scan(&id); err != nil {
 			return err
 		}
 	}
@@ -169,6 +183,95 @@ func (w *SFProjectCreateWorker) Work(ctx context.Context, job *river.Job[SFProje
 			WorkspaceID: job.Args.WorkspaceID,
 			URL:         url,
 			Text:        name + " created from Salesforce (closed-won " + job.Args.OpportunityID + ")",
+		}, nil); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+type HSProjectCreateWorker struct {
+	river.WorkerDefaults[HSProjectCreateArgs]
+	pool  *pgxpool.Pool
+	river *river.Client[pgx.Tx]
+}
+
+func (w *HSProjectCreateWorker) Work(ctx context.Context, job *river.Job[HSProjectCreateArgs]) error {
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.workspace_id', $1, true)", job.Args.WorkspaceID); err != nil {
+		return err
+	}
+
+	var templateID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT default_template_id FROM workspace_integrations
+		WHERE workspace_id = $1 AND provider = 'hubspot'`, job.Args.WorkspaceID).Scan(&templateID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // integration removed between enqueue and run
+		}
+		return err
+	}
+
+	// Deal's company becomes the customer — lookup-then-insert, dupes
+	// accepted at P0 like SF (ponytail: match HubSpot company IDs when
+	// OAuth lands P1).
+	var customerID string
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM customers
+		WHERE workspace_id = $1::uuid AND name = $2`,
+		job.Args.WorkspaceID, job.Args.Company).Scan(&customerID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO customers (workspace_id, name)
+			VALUES ($1::uuid, $2) RETURNING id`,
+			job.Args.WorkspaceID, job.Args.Company).Scan(&customerID)
+	}
+	if err != nil {
+		return err
+	}
+
+	name := job.Args.DealName + " — onboarding"
+	refs := `{"hubspot_deal_id":"` + job.Args.DealID + `"}`
+	var id string
+	if templateID != nil && *templateID != "" {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO projects (workspace_id, customer_id, name, description, external_refs, status)
+			SELECT workspace_id, $2::uuid, $3 || ' — ' || name, description, $4::jsonb, 'active'
+			FROM templates WHERE id = $1::uuid
+			RETURNING id`, *templateID, customerID, name, refs).Scan(&id); err != nil {
+			return err
+		}
+	} else {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO projects (workspace_id, customer_id, name, external_refs, status)
+			VALUES ($1::uuid, $2::uuid, $3, $4::jsonb, 'active') RETURNING id`,
+			job.Args.WorkspaceID, customerID, name, refs).Scan(&id); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO audit_logs (workspace_id, entity_type, entity_id, actor_type, actor_id, action, source)
+		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'project', $1, 'system', NULL,
+		        'project.created_from_hubspot', 'system')`, id); err != nil {
+		return err
+	}
+
+	var url string
+	if err := tx.QueryRow(ctx, `
+		SELECT slack_webhook_url FROM workspace_settings
+		WHERE workspace_id = $1 AND notify_project_created`,
+		job.Args.WorkspaceID).Scan(&url); err == nil && url != "" {
+		if _, err := w.river.InsertTx(ctx, tx, SlackNotifyArgs{
+			WorkspaceID: job.Args.WorkspaceID,
+			URL:         url,
+			Text:        name + " created from HubSpot (closed-won " + job.Args.DealID + ")",
 		}, nil); err != nil {
 			return err
 		}
@@ -200,6 +303,7 @@ func main() {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, NewSlackNotifyWorker())
 	river.AddWorker(workers, &SFProjectCreateWorker{pool: pool, river: rc})
+	river.AddWorker(workers, &HSProjectCreateWorker{pool: pool, river: rc})
 
 	rc, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{

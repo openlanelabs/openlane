@@ -231,10 +231,27 @@ func TestWorkerEndToEnd(t *testing.T) {
 	t.Setenv("OPENLANE_SLACK_ALLOW_ANY", "1")
 	h.do("PUT", "/v1/settings/slack", map[string]any{"webhook_url": stub})
 
-	// seed + fire the sf webhook (closed-won)
+	// seed + fire the sf webhook (closed-won); template set so the
+	// worker's template branch runs (latent #55 bug: it referenced
+	// projects.description before 00015 added the column)
 	secret := "worker-e2e-secret"
+	code, tplBody := h.do("POST", "/v1/templates", map[string]any{
+		"name": "SF std", "category": "onboarding", "description": "sf flow",
+		"phases": []map[string]any{{
+			"name":  "Kickoff",
+			"tasks": []map[string]any{{"title": "Kickoff call", "due_offset_days": 1, "required": true, "customer_visible": true}},
+		}},
+	})
+	if code != 201 {
+		t.Fatalf("template = %d %s", code, tplBody)
+	}
+	var tpl struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(tplBody, &tpl)
 	h.do("PUT", "/v1/integrations/salesforce", map[string]any{
 		"instance_url": "https://x.my.salesforce.com", "webhook_secret": secret,
+		"default_template_id": tpl.ID,
 	})
 	ev := map[string]any{
 		"organizationId": "00Dxx0000000002", "opportunityId": "006xx0000000099",
@@ -284,6 +301,17 @@ func TestWorkerEndToEnd(t *testing.T) {
 	}
 	if !waitFor(`SELECT count(*) FROM projects WHERE name LIKE '%Worker E2E Corp%'`) {
 		t.Fatalf("sf project not created; worker out: %s", buf.String())
+	}
+	// template branch: description copied + CRM origin recorded (§6.3)
+	var desc string
+	var refs string
+	if err := ap.QueryRow(context.Background(),
+		`SELECT COALESCE(description,''), external_refs::text FROM projects WHERE name LIKE '%Worker E2E Corp%'`).
+		Scan(&desc, &refs); err != nil {
+		t.Fatalf("project fetch: %v", err)
+	}
+	if desc != "sf flow" || !strings.Contains(refs, "006xx0000000099") {
+		t.Fatalf("template branch broken: desc=%q refs=%s", desc, refs)
 	}
 	if !waitFor(`SELECT count(*) FROM audit_logs WHERE action='project.created_from_salesforce'`) {
 		t.Fatalf("audit missing; worker out: %s", buf.String())
