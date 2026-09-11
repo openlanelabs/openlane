@@ -992,6 +992,59 @@ INSERT INTO test_results
 SELECT 'T20f skills && filter', EXISTS (
   SELECT 1 FROM people WHERE skills && ARRAY['go'] AND id = '99999999-9999-9999-9999-999999999999');
 
+
+-- ---------- T21: time approvals (00025) ----------
+-- seed: ravi (bbbb) as a member so the FK holds
+INSERT INTO users (id, email, display_name)
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'ravi@acme.test', 'Ravi')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO memberships (workspace_id, user_id, role)
+VALUES ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'member')
+ON CONFLICT DO NOTHING;
+INSERT INTO time_entries (id, workspace_id, project_id, user_id, started_at, ended_at, minutes, status)
+VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001', '11111111-1111-1111-1111-111111111111',
+        '55555555-5555-5555-5555-555555555555', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        now() - interval '6 hours', now() - interval '5 hours', 60, 'draft');
+
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- T21a: reject_reason column exists + initially null
+INSERT INTO test_results
+SELECT 'T21a reject_reason present', EXISTS (
+  SELECT 1 FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001'
+    AND reject_reason IS NULL AND status = 'draft');
+
+-- T21b: full state ladder in SQL: draft→submitted→rejected (with reason)→submitted→approved
+UPDATE time_entries SET status = 'submitted' WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001';
+UPDATE time_entries SET status = 'rejected', reject_reason = 'needs ticket' WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001';
+INSERT INTO test_results
+SELECT 'T21b rejected carries reason', EXISTS (
+  SELECT 1 FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001'
+    AND status = 'rejected' AND reject_reason = 'needs ticket');
+UPDATE time_entries SET status = 'submitted', reject_reason = NULL WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001';
+UPDATE time_entries SET status = 'approved' WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001';
+INSERT INTO test_results
+SELECT 'T21b2 approved terminal state', EXISTS (
+  SELECT 1 FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001'
+    AND status = 'approved' AND reject_reason IS NULL);
+
+-- T21c: cross-ws UPDATE on the entry blocked
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+DO $$
+BEGIN
+  BEGIN
+    UPDATE time_entries SET status = 'approved' WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001';
+    IF (SELECT status FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001') = 'approved' THEN
+      RAISE EXCEPTION 'T21c expected RLS block';
+    END IF;
+  EXCEPTION WHEN insufficient_privilege OR others THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T21c cross-ws status change blocked', (
+  SELECT status FROM time_entries WHERE id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbb00000001') = 'submitted';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
