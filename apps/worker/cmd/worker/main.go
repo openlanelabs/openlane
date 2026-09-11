@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -63,6 +64,15 @@ type HSProjectCreateArgs struct {
 }
 
 func (HSProjectCreateArgs) Kind() string { return "hubspot_deal_create" }
+
+// TimeReminderArgs: nudge members with zero time logged this week
+// (P1 §307). Window tag makes the enqueue unique per fire window —
+// river's unique jobs dedupe the periodic ticks that land inside it.
+type TimeReminderArgs struct {
+	Window string `json:"window" river:"unique"` // e.g. 2026-W37-fri
+}
+
+func (TimeReminderArgs) Kind() string { return "time_reminder" }
 
 // JiraStatusPushArgs mirrors the api package struct (JSON coupling).
 type JiraStatusPushArgs struct {
@@ -241,6 +251,74 @@ func (w *JiraStatusPushWorker) Work(ctx context.Context, job *river.Job[JiraStat
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// reminderWindow: the firing window or "" outside them. Fri 16:00–16:59
+// and Mon 09:00–09:59 UTC (spec §307; server TZ, per-user TZ later).
+func reminderWindow(now time.Time) string {
+	_, week := now.ISOWeek()
+	if now.Weekday() == time.Friday && now.Hour() == 16 {
+		return fmt.Sprintf("%d-W%02d-fri", now.Year(), week)
+	}
+	if now.Weekday() == time.Monday && now.Hour() == 9 {
+		return fmt.Sprintf("%d-W%02d-mon", now.Year(), week)
+	}
+	return ""
+}
+
+// TimeReminderWorker: one query per Slack-configured workspace — members
+// with zero entries this ISO week get one workspace-channel digest line.
+type TimeReminderWorker struct {
+	river.WorkerDefaults[TimeReminderArgs]
+	pool *pgxpool.Pool
+}
+
+func (w *TimeReminderWorker) Work(ctx context.Context, job *river.Job[TimeReminderArgs]) error {
+	// jitter (§455): spread the herd across the window
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(rand.Intn(60)) * time.Second):
+	}
+
+	rows, err := w.pool.Query(ctx, `SELECT workspace_id::text, slack_url, names, n FROM time_reminder_digest()`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var wsID, url, names string
+		var n int
+		if err := rows.Scan(&wsID, &url, &names, &n); err != nil {
+			return err
+		}
+		// own short tx: enqueue the delivery (durable per ADR-0003)
+		tx, err := w.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.workspace_id', $1, true)", wsID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		// queue in river directly via SQL insert (worker app has no
+		// enqueue client here; the api's InsertTx equivalent is the
+		// river_job row itself) — ponytail: direct insert, river reads it.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO river_job (queue, kind, state, args, created_at, max_attempts, metadata)
+			VALUES ('default', 'slack_notify', 'available',
+			        jsonb_build_object('workspace_id', $1, 'url', $2, 'text', $3),
+			        now(), 25, '{}'::jsonb)`,
+			wsID, url, fmt.Sprintf("⏰ %d member(s) haven't logged time this week: %s", n, names)); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
 }
 
 type SlackNotifyWorker struct {
@@ -489,12 +567,29 @@ func main() {
 	river.AddWorker(workers, &SFProjectCreateWorker{pool: pool, river: rc})
 	river.AddWorker(workers, &HSProjectCreateWorker{pool: pool, river: rc})
 	river.AddWorker(workers, &JiraStatusPushWorker{pool: pool})
+	river.AddWorker(workers, &TimeReminderWorker{pool: pool})
 
 	rc, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
 			"default": {MaxWorkers: 10},
 		},
 		Workers: workers,
+		PeriodicJobs: []*river.PeriodicJob{
+			// every 15m; Work self-checks the Fri-16 / Mon-09 windows and
+			// river's unique jobs (window tag) dedupe ticks inside one.
+			river.NewPeriodicJob(
+				river.PeriodicInterval(15*time.Minute),
+				func() (river.JobArgs, *river.InsertOpts) {
+					w := reminderWindow(time.Now().UTC())
+					if w == "" {
+						return nil, nil
+					}
+					return TimeReminderArgs{Window: w}, &river.InsertOpts{
+						UniqueOpts: river.UniqueOpts{ByArgs: true},
+					}
+				},
+				nil),
+		},
 	})
 	if err != nil {
 		log.Fatalf("river client: %v", err)
