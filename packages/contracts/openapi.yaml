@@ -1328,6 +1328,155 @@ paths:
                     created_at:
                       type: string
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /tasks/{id}/messages:
+    post:
+      summary: Staff — post a message on a task thread (chat-lite)
+      description: >
+        Author = the JWT user. @email and @uuid mentions are extracted
+        server-side and stored. 30 msgs/min/author (§276 spam edge).
+      operationId: createTaskMessage
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Posted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: Rate-limited (Retry-After) }
+    get:
+      summary: Staff — read the task thread
+      description: >
+        ?after_id= returns messages strictly after that message
+        (created_at,id ordering). Polling shape until the WS hub (§449).
+      operationId: listTaskMessages
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: after_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Thread (max 200)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskMessage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /portal/{token}/tasks/{task_id}/messages:
+    post:
+      summary: Portal — customer replies on a shared task
+      description: >
+        Only customer_visible tasks in the link's projects; internal
+        tasks 404 (no oracle). Author = the link's contact.
+      operationId: portalPostTaskMessage
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Posted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { description: Rate-limited }
+    get:
+      summary: Portal — read the shared task's thread
+      operationId: portalListTaskMessages
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: after_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Thread
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskMessage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410": { description: Link expired or revoked }
   /search:
     get:
       summary: Global search (projects, tasks, docs, files)
@@ -2346,6 +2495,30 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    TaskMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        author_type:
+          type: string
+          enum: [user, contact]
+        author_id:
+          type: string
+        author_name:
+          type: string
+        body:
+          type: string
+        mentions:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
     Automation:
       type: object
       properties:

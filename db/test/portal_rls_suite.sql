@@ -623,6 +623,67 @@ SELECT 'T15d no-ctx automations invisible', count(*) = 0
 FROM automations;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T16: task_messages (00018) ----------
+-- staff seed: message on a customer-visible task (5555's) + one on the
+-- UNLINKED project's task (6666, also visible in suite seed? 6666 has no
+-- tasks seeded — create via staff insert)
+INSERT INTO task_messages (workspace_id, task_id, author_type, author_id, body)
+SELECT '11111111-1111-1111-1111-111111111111', t.id, 'user', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+       'kickoff question about SSO'
+FROM tasks t WHERE t.customer_visible AND t.project_id = '55555555-5555-5555-5555-555555555555'
+LIMIT 1;
+
+INSERT INTO test_results
+SELECT 'T16a own-ws messages visible', count(*) = 1
+FROM task_messages WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T16b cross-tenant messages invisible', count(*) = 0
+FROM task_messages WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal ctx: sees the message (its task is customer-visible + linked)
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T16c portal reads thread', count(*) = 1
+FROM task_messages;
+
+-- portal INSERT allowed on customer-visible task
+DO $check$
+DECLARE v_id uuid;
+BEGIN
+  INSERT INTO task_messages (workspace_id, task_id, author_type, author_id, body)
+  SELECT '11111111-1111-1111-1111-111111111111', t.id, 'contact', '44444444-4444-4444-4444-444444444444',
+         'customer reply'
+  FROM tasks t WHERE t.customer_visible AND t.project_id = '55555555-5555-5555-5555-555555555555'
+  LIMIT 1;
+  -- expect success; verify count grew
+  IF (SELECT count(*) FROM task_messages) <> 2 THEN
+    RAISE EXCEPTION 'T16d FAIL: portal message insert did not land';
+  END IF;
+END
+$check$;
+INSERT INTO test_results
+SELECT 'T16d portal insert lands', count(*) = 2
+FROM task_messages;
+
+-- portal INSERT on an INTERNAL task blocked (task invisible → 0 source rows)
+INSERT INTO task_messages (workspace_id, task_id, author_type, author_id, body)
+SELECT '11111111-1111-1111-1111-111111111111', t.id, 'contact', '44444444-4444-4444-4444-444444444444', 'sneak'
+FROM tasks t WHERE NOT t.customer_visible;
+INSERT INTO test_results
+SELECT 'T16e portal cannot post to internal task', count(*) = 0
+FROM task_messages tm JOIN tasks t ON t.id = tm.task_id
+WHERE NOT t.customer_visible AND tm.body = 'sneak';
+
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO test_results
+SELECT 'T16f no-ctx messages invisible', count(*) = 0
+FROM task_messages;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
