@@ -842,6 +842,84 @@ INSERT INTO test_results
 SELECT 'T18f budget.warning trigger accepted', EXISTS (
   SELECT 1 FROM automations WHERE name = 'BudgetWarn');
 
+
+-- ---------- T19: invoices (00023) ----------
+-- draft invoice in ws 1111 for the seeded customer
+INSERT INTO invoices (id, workspace_id, customer_id, status, period_start, period_end, line_items, subtotal)
+VALUES ('88888888-8888-8888-8888-888888888888', '11111111-1111-1111-1111-111111111111',
+        '33333333-3333-3333-3333-333333333333', 'draft', CURRENT_DATE - 7, CURRENT_DATE,
+        '[{"task_id":null,"role":"admin","minutes":90,"rate":200,"amount":300}]', 300);
+
+-- T19a: tenant ctx can read own invoice
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T19a tenant reads own invoice', EXISTS (
+  SELECT 1 FROM invoices WHERE id = '88888888-8888-8888-8888-888888888888');
+
+-- T19b: foreign workspace cannot see it
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T19b cross-ws invoice invisible', NOT EXISTS (
+  SELECT 1 FROM invoices WHERE id = '88888888-8888-8888-8888-888888888888');
+
+-- T19c: cross-ws status UPDATE blocked
+DO $$
+BEGIN
+  BEGIN
+    UPDATE invoices SET status = 'sent' WHERE id = '88888888-8888-8888-8888-888888888888';
+    IF (SELECT status FROM invoices WHERE id = '88888888-8888-8888-8888-888888888888') = 'sent' THEN
+      RAISE EXCEPTION 'T19c expected RLS block';
+    END IF;
+  EXCEPTION WHEN insufficient_privilege OR others THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T19c cross-ws update blocked', (
+  SELECT status FROM invoices WHERE id = '88888888-8888-8888-8888-888888888888') = 'draft';
+
+-- T19d: status CHECK enum
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    UPDATE invoices SET status = 'maybe' WHERE id = '88888888-8888-8888-8888-888888888888';
+    RAISE EXCEPTION 'T19d expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T19d bad status rejected', TRUE;
+
+-- T19e: time_entries 'invoiced' status accepted
+DO $$
+BEGIN
+  PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+  INSERT INTO time_entries (workspace_id, project_id, user_id, started_at, ended_at, minutes, status)
+  VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555',
+          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', now() - interval '4 hours', now() - interval '3 hours', 60, 'invoiced');
+END $$;
+INSERT INTO test_results
+SELECT 'T19e time_entries invoiced accepted', EXISTS (
+  SELECT 1 FROM time_entries WHERE status = 'invoiced' AND minutes = 60);
+
+-- T19f: period CHECK — end before start rejected
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    INSERT INTO invoices (workspace_id, customer_id, period_start, period_end)
+    VALUES ('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333',
+            CURRENT_DATE, CURRENT_DATE - 1);
+    RAISE EXCEPTION 'T19f expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T19f inverted period rejected', TRUE;
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

@@ -577,6 +577,138 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /customers/{id}/invoices/generate:
+    post:
+      summary: Generate a draft invoice from approved time
+      operationId: generateInvoice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period_start, period_end]
+              properties:
+                period_start: {type: string, format: date}
+                period_end: {type: string, format: date}
+                notes: {type: [string, "null"]}
+      responses:
+        "201":
+          description: Draft invoice created (time entries consumed)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Invoice"}
+        "400":
+          description: Bad period / missing rate for a role
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: No unbilled approved time / customer not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /invoices:
+    get:
+      summary: 'List invoices (filters: status, customer_id)'
+      operationId: listInvoices
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: status
+          in: query
+          schema: {type: string, enum: [draft, sent, paid, void]}
+        - name: customer_id
+          in: query
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Invoices (newest first, cap 200)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Invoice"}
+  /invoices/{id}:
+    get:
+      summary: Invoice detail with line items
+      operationId: getInvoice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Invoice
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Invoice"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    patch:
+      summary: Update invoice (status transitions, notes while draft)
+      operationId: patchInvoice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: {type: string, enum: [sent, paid, void]}
+                notes: {type: [string, "null"]}
+      responses:
+        "200":
+          description: Updated invoice
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Invoice"}
+        "400":
+          description: Invalid transition or locked field
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
@@ -2945,6 +3077,28 @@ components:
         logged_hours: {type: number}
         pct: {type: [number, "null"], description: "null when unbudgeted"}
         status: {type: string, enum: [unbudgeted, ok, warn50, warn80, over]}
+    Invoice:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        customer_id: {type: string, format: uuid}
+        status: {type: string, enum: [draft, sent, paid, void]}
+        period_start: {type: string, format: date}
+        period_end: {type: string, format: date}
+        line_items:
+          type: array
+          description: Frozen snapshot at generation
+          items:
+            type: object
+            properties:
+              task_id: {type: [string, "null"], format: uuid}
+              role: {type: string}
+              minutes: {type: integer}
+              rate: {type: number}
+              amount: {type: number}
+        subtotal: {type: string, description: "Numeric(12,2) as string"}
+        notes: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
     TemplateInput:
       type: object
       required: [name, category, phases]
