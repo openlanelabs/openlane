@@ -46,6 +46,7 @@ type Budget = {
 
 type Invoice = {
   id: string;
+  customer_id: string;
   status: "draft" | "sent" | "paid" | "void";
   period_start: string;
   period_end: string;
@@ -61,7 +62,7 @@ const NEXT: Record<string, string> = {
 export default function ProjectDetail() {
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
-  const [project, setProject] = useState<{ name: string; status: string; health: string; progress_pct: number } | null>(null);
+  const [project, setProject] = useState<{ name: string; status: string; health: string; progress_pct: number; customer_id: string } | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [docs, setDocs] = useState<Doc[] | null>(null);
@@ -70,6 +71,9 @@ export default function ProjectDetail() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [budgetHours, setBudgetHours] = useState("");
   const [billingType, setBillingType] = useState("");
+  const [invFrom, setInvFrom] = useState("");
+  const [invTo, setInvTo] = useState("");
+  const [currency, setCurrency] = useState("");
   const [approvalTitle, setApprovalTitle] = useState("");
   const [docTitle, setDocTitle] = useState("");
   const [docBody, setDocBody] = useState("");
@@ -86,9 +90,15 @@ export default function ProjectDetail() {
       api(`/projects/${id}/csat`),
       api(`/projects/${id}/budget`),
       api(`/invoices`),
+      api(`/rate-cards`),
     ]);
     if (results[0].status === "fulfilled" && results[0].value.status === 401) { router.push("/login"); return; }
-    if (results[0].status === "fulfilled" && results[0].value.ok) setProject(await results[0].value.json());
+    let cust: string | undefined;
+    if (results[0].status === "fulfilled" && results[0].value.ok) {
+      const proj = await results[0].value.json();
+      setProject(proj);
+      cust = proj.customer_id;
+    }
     if (results[1].status === "fulfilled" && results[1].value.ok) setTasks(await results[1].value.json());
     else setErr("Couldn't load tasks.");
     if (results[2].status === "fulfilled" && results[2].value.ok) setApprovals(await results[2].value.json());
@@ -100,8 +110,15 @@ export default function ProjectDetail() {
       if (b.budget_hours !== null) setBudgetHours(String(b.budget_hours));
       setBillingType(b.billing_type);
     } else setBudget(null);
-    if (results[6].status === "fulfilled" && results[6].value.ok) setInvoices(await results[6].value.json());
-    else setInvoices([]);
+    let allInv: Invoice[] = [];
+    if (results[6].status === "fulfilled" && results[6].value.ok) allInv = await results[6].value.json();
+    // scope to this project's customer
+    setInvoices(cust ? allInv.filter((i) => i.customer_id === cust) : []);
+    if (results[7].status === "fulfilled" && results[7].value.ok) {
+      const cards = (await results[7].value.json()) as { customer_id: string | null; currency: string }[];
+      const def = cards.find((c) => c.customer_id === null);
+      if (def) setCurrency(def.currency);
+    }
   }, [id, router]);
 
   useEffect(() => { void load(); }, [load]);
@@ -172,6 +189,25 @@ export default function ProjectDetail() {
       setErr(problem.title || "Couldn't save the budget.");
       return;
     }
+    await load();
+  }
+
+  async function generateInvoice(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    const cust = project?.customer_id;
+    if (!cust || !invFrom || !invTo) return;
+    const res = await api(`/customers/${cust}/invoices/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ period_start: invFrom, period_end: invTo }),
+    });
+    if (!res.ok) {
+      const problem = await res.json().catch(() => ({ title: "" }));
+      setErr(problem.title || "Couldn't generate an invoice.");
+      return;
+    }
+    setInvFrom(""); setInvTo("");
     await load();
   }
 
@@ -447,6 +483,31 @@ export default function ProjectDetail() {
         {invoices !== null && (
           <section aria-label="Invoices" className="rounded-[10px] border border-border bg-surface p-4">
             <h2 className="text-sm font-semibold text-text">Invoices</h2>
+            {project?.customer_id && (
+              <form onSubmit={generateInvoice} className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  type="date"
+                  value={invFrom}
+                  onChange={(e) => setInvFrom(e.target.value)}
+                  aria-label="Period start"
+                  className="rounded-[10px] border border-border bg-bg px-2 py-2 text-sm text-text"
+                />
+                <span className="text-xs text-muted">→</span>
+                <input
+                  type="date"
+                  value={invTo}
+                  onChange={(e) => setInvTo(e.target.value)}
+                  aria-label="Period end"
+                  className="rounded-[10px] border border-border bg-bg px-2 py-2 text-sm text-text"
+                />
+                <button
+                  disabled={!invFrom || !invTo}
+                  className="rounded-[10px] bg-primary px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  Generate draft
+                </button>
+              </form>
+            )}
             <ul className="mt-3 space-y-2">
               {invoices.length === 0 && <li className="text-xs text-muted">None yet.</li>}
               {invoices.map((inv) => (
@@ -464,7 +525,7 @@ export default function ProjectDetail() {
                             : "text-warning"
                       }`}
                     >
-                      {inv.status} · ${inv.subtotal}
+                      {inv.status} · {currency} {inv.subtotal}
                     </span>
                   </div>
                   <div className="flex shrink-0 gap-1">
