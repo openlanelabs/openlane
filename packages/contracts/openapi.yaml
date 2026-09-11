@@ -1170,6 +1170,72 @@ paths:
                 items:
                   $ref: "#/components/schemas/TimeEntry"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /search:
+    get:
+      summary: Global search (projects, tasks, docs, files)
+      description: >
+        Trigram similarity (typo-tolerant) + substring fallback for
+        short queries; ranked by score, recency tiebreak. Permission
+        filtering is RLS — every branch of the UNION runs under the
+        caller's tenant + visibility policies (§207 never leak
+        internal).
+      operationId: staffSearch
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        "200":
+          description: Hits (max 60)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchHit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /portal/{token}/search:
+    get:
+      summary: Portal search — customer-visible rows only
+      description: >
+        Same engine scoped by the portal link: shared projects,
+        customer_visible tasks/docs/files. Internal rows are never
+        candidates — RLS again, not application filtering.
+      operationId: portalSearch
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 43
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+      responses:
+        "200":
+          description: Hits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchHit"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "410": { description: Link expired or revoked }
   /integrations/hubspot:
     put:
       summary: Configure HubSpot one-way integration
@@ -2122,6 +2188,22 @@ components:
         url:
           type: string
           description: presigned GET — /url responses only
+    SearchHit:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [project, task, doc, file]
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        score:
+          type: number
     Form:
       type: object
       properties:

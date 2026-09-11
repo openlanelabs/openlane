@@ -546,6 +546,50 @@ SELECT 'T13i no-ctx responses invisible', count(*) = 0
 FROM form_responses;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T14: search (00016) ----------
+-- trigram indexes exist on all four searchable columns
+INSERT INTO test_results
+SELECT 'T14a trigram indexes present', count(*) = 4
+FROM pg_indexes
+WHERE indexname IN ('idx_projects_name_trgm','idx_tasks_title_trgm',
+                    'idx_docs_title_trgm','idx_files_name_trgm');
+
+-- staff search (ws ctx): finds the project by prefix match
+INSERT INTO test_results
+SELECT 'T14b staff search finds own project',
+       count(*) = 1
+FROM (
+    SELECT p.name FROM projects p
+    WHERE p.deleted_at IS NULL AND p.name % 'Adobe Onboardng'
+      AND p.workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid
+) sub;
+
+-- cross-tenant: the same query under wsB sees nothing of wsA
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T14c cross-tenant search empty', count(*) = 0
+FROM projects p
+WHERE p.deleted_at IS NULL AND p.name % 'Apollo'
+  AND p.workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- portal search scope: internal-only rows never match even with a
+-- perfect term (RLS: portal sees only its project + customer_visible)
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', encode(sha256('suite-token-a'::bytea), 'hex'), false);
+INSERT INTO test_results
+SELECT 'T14d portal search cannot see unlinked project',
+       count(*) = 0
+FROM projects p
+WHERE p.name % 'Adobe Phase 2' OR p.id = '66666666-6666-6666-6666-666666666666';
+INSERT INTO test_results
+SELECT 'T14e portal search sees linked project',
+       count(*) = 1
+FROM projects p
+WHERE p.id = '55555555-5555-5555-5555-555555555555';
+SELECT set_config('app.portal_token_hash', '', false);
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
