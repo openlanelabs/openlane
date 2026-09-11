@@ -551,6 +551,32 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /projects/{id}/budget:
+    get:
+      summary: Budget rollup (logged hours, pct, status)
+      operationId: getProjectBudget
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Budget rollup
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Budget"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
@@ -2910,6 +2936,15 @@ components:
         target_go_live: {type: [string, "null"], format: date}
         progress_pct: {type: integer, description: Computed — done+waived / total tasks}
         created_at: {type: string, format: date-time}
+    Budget:
+      type: object
+      properties:
+        budget_hours: {type: [integer, "null"], description: "null = unbudgeted"}
+        billing_type: {type: string, enum: [tm, fixed, retainer]}
+        logged_minutes: {type: integer}
+        logged_hours: {type: number}
+        pct: {type: [number, "null"], description: "null when unbudgeted"}
+        status: {type: string, enum: [unbudgeted, ok, warn50, warn80, over]}
     TemplateInput:
       type: object
       required: [name, category, phases]

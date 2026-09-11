@@ -200,6 +200,8 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		StartDate    *string `json:"start_date"`
 		TargetGoLive *string `json:"target_go_live"`
 		Health       *string `json:"health"`
+		BudgetHours  *int    `json:"budget_hours"`
+		BillingType  *string `json:"billing_type"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
 		problem(w, http.StatusBadRequest, "malformed request body")
@@ -207,6 +209,14 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil && (len(*req.Name) < 3 || len(*req.Name) > 120) {
 		problem(w, http.StatusBadRequest, "name must be 3-120 chars")
+		return
+	}
+	if req.BillingType != nil && *req.BillingType != "tm" && *req.BillingType != "fixed" && *req.BillingType != "retainer" {
+		problem(w, http.StatusBadRequest, "billing_type must be tm|fixed|retainer")
+		return
+	}
+	if req.BudgetHours != nil && *req.BudgetHours <= 0 {
+		problem(w, http.StatusBadRequest, "budget_hours must be > 0 (§328)")
 		return
 	}
 
@@ -294,10 +304,15 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		  target_go_live = COALESCE($6::date, p.target_go_live),
 		  actual_go_live = CASE WHEN $3 = 'completed' AND p.actual_go_live IS NULL
 		                       THEN now()::date ELSE p.actual_go_live END,
+		  budget_hours = CASE WHEN $3 = 'completed' THEN p.budget_hours
+		                      ELSE COALESCE($7::int, p.budget_hours) END,
+		  billing_type = COALESCE($8, p.billing_type),
+		  budget_alert_level = CASE WHEN COALESCE($7::int, p.budget_hours) IS DISTINCT FROM p.budget_hours THEN 0
+		                            ELSE p.budget_alert_level END,
 		  updated_at = now()
-		WHERE p.id = $1 AND p.deleted_at IS NULL
+		WHERE p.id = $1::uuid AND p.deleted_at IS NULL
 		RETURNING id, customer_id, name, status, health, start_date::text, target_go_live::text, created_at`,
-		id, req.Name, req.Status, req.Health, req.StartDate, req.TargetGoLive))
+		id, req.Name, req.Status, req.Health, req.StartDate, req.TargetGoLive, req.BudgetHours, req.BillingType))
 	if err == pgx.ErrNoRows {
 		problem(w, http.StatusNotFound, "project not found")
 		return

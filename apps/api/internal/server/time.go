@@ -144,6 +144,8 @@ func (s *Server) logTime(targetTaskID string) http.HandlerFunc {
 			problem(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		// §319 real-time budget alert: the entry that crosses the band fires
+		go s.checkBudgetAlert(ctx, workspaceFromCtx(ctx), projectID)
 		out := timeEntryOut{
 			ID: id, ProjectID: projectID, Minutes: minutes,
 			StartedAt: started.UTC().Format(time.RFC3339),
