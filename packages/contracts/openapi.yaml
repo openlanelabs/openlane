@@ -709,6 +709,243 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /people:
+    post:
+      summary: Create a person (staff directory entry)
+      operationId: createPerson
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                user_id: {type: string, format: uuid}
+                name: {type: string, minLength: 1, maxLength: 120}
+                role: {type: string, minLength: 1, maxLength: 60}
+                skills: {type: array, items: {type: string}}
+                cost_rate: {type: string}
+                bill_rate: {type: string}
+                capacity_hrs: {type: string}
+                timezone: {type: string}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Person"}
+        "400":
+          description: Validation
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: List people (filter by skills CSV, active)
+      operationId: listPeople
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: skills
+          in: query
+          schema: {type: string}
+        - name: active
+          in: query
+          schema: {type: string, enum: ["true"]}
+      responses:
+        "200":
+          description: People
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Person"}
+  /people/{id}:
+    patch:
+      summary: Update person
+      operationId: patchPerson
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: {type: string}
+                skills: {type: array, items: {type: string}}
+                cost_rate: {type: string}
+                bill_rate: {type: string}
+                capacity_hrs: {type: string}
+                timezone: {type: string}
+                active: {type: boolean}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Person"}
+        "400":
+          description: Validation
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /people/{id}/allocations:
+    post:
+      summary: Allocate person to project (hard|soft)
+      operationId: createAllocation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, role, hours_week, starts_on, ends_on]
+              properties:
+                project_id: {type: string, format: uuid}
+                role: {type: string}
+                hours_week: {type: string}
+                starts_on: {type: string, format: date}
+                ends_on: {type: string, format: date}
+                kind: {type: string, enum: [hard, soft]}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Allocation"}
+        "400":
+          description: Validation
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: Person or project not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: List person allocations (filters project_id, kind)
+      operationId: listAllocations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: project_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: kind
+          in: query
+          schema: {type: string, enum: [hard, soft]}
+      responses:
+        "200":
+          description: Allocations
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Allocation"}
+  /people/{id}/utilization:
+    get:
+      summary: Utilization for a date window (logged vs nominal capacity)
+      operationId: getPersonUtilization
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: start
+          in: query
+          required: true
+          schema: {type: string, format: date}
+        - name: end
+          in: query
+          required: true
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: Utilization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Utilization"}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /allocations/{id}:
+    delete:
+      summary: Soft-delete an allocation
+      operationId: deleteAllocation
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
@@ -3099,6 +3336,40 @@ components:
         subtotal: {type: string, description: "Numeric(12,2) as string"}
         notes: {type: [string, "null"]}
         created_at: {type: string, format: date-time}
+    Person:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        user_id: {type: [string, "null"], format: uuid}
+        name: {type: string}
+        role: {type: string}
+        skills: {type: array, items: {type: string}}
+        cost_rate: {type: string}
+        bill_rate: {type: string}
+        capacity_hrs: {type: string}
+        timezone: {type: string}
+        active: {type: boolean}
+        created_at: {type: string, format: date-time}
+    Allocation:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        person_id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        role: {type: string}
+        hours_week: {type: string}
+        starts_on: {type: string, format: date}
+        ends_on: {type: string, format: date}
+        kind: {type: string, enum: [hard, soft]}
+        created_at: {type: string, format: date-time}
+    Utilization:
+      type: object
+      properties:
+        person_id: {type: string, format: uuid}
+        logged_minutes: {type: integer}
+        loggable_minutes: {type: number, description: Nominal capacity × workdays}
+        utilization: {type: [number, "null"]}
+        weeks: {type: number}
     TemplateInput:
       type: object
       required: [name, category, phases]
