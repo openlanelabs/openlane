@@ -2423,6 +2423,115 @@ paths:
           schema: {type: string, format: uuid}
       responses:
         "204": {description: Cleared}
+  /rate-cards:
+    post:
+      summary: Create a rate card (P1 §320)
+      operationId: createRateCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RateCardIn"}
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RateCard"}
+        "400": {description: Validation}
+    get:
+      summary: List rate cards (rates aggregated)
+      operationId: listRateCards
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Cards
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/RateCard"}
+  /rate-cards/{id}:
+    get:
+      summary: Get one rate card with rates
+      operationId: getRateCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Card
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RateCard"}
+        "404": {description: Not found}
+    patch:
+      summary: Activate/deactivate (rates are immutable — §326)
+      operationId: patchRateCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_active]
+              properties:
+                is_active: {type: boolean}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RateCard"}
+    delete:
+      summary: Soft-delete a rate card
+      operationId: deleteRateCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Deleted}
+        "404": {description: Not found}
   /v1/metrics:
     get:
       summary: Workspace acceptance metrics — TTV, portal open rate, p95 latency
@@ -2648,6 +2757,44 @@ components:
         id:
           type: string
           format: uuid
+    RateCardIn:
+      type: object
+      required: [name, rates]
+      properties:
+        customer_id:
+          type: [string, "null"]
+          format: uuid
+        name: {type: string}
+        currency: {type: string, description: 3-letter ISO code}
+        effective_from: {type: string, format: date}
+        rates:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [role, hourly_rate]
+            properties:
+              role: {type: string}
+              hourly_rate: {type: number}
+    RateCard:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        customer_id:
+          type: [string, "null"]
+          format: uuid
+        name: {type: string}
+        currency: {type: string}
+        is_active: {type: boolean}
+        effective_from: {type: string, format: date}
+        rates:
+          type: array
+          items:
+            type: object
+            properties:
+              role: {type: string}
+              hourly_rate: {type: number}
+        created_at: {type: string}
     Metrics:
       type: object
       description: P0 acceptance metrics (§588) — TTV, portal open rate, latency

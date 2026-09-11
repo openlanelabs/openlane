@@ -154,6 +154,11 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.HandleFunc("GET /v1/portal/{token}/files/{file_id}/url", s.portal(s.portalFileURL))
 
 	mux.Handle("GET /v1/metrics", authed(s.getMetrics))
+	mux.Handle("POST /v1/rate-cards", authed(s.createRateCard))
+	mux.Handle("GET /v1/rate-cards", authed(s.listRateCards))
+	mux.Handle("GET /v1/rate-cards/{id}", authed(s.getRateCard))
+	mux.Handle("PATCH /v1/rate-cards/{id}", authed(s.patchRateCard))
+	mux.Handle("DELETE /v1/rate-cards/{id}", authed(s.deleteRateCard))
 	// Prometheus scrape endpoint — same auth shape as staff (scrapers send
 	// the bearer); no portal route exists (§207: portal never sees ops data).
 	mux.Handle("GET /metrics", authed(s.prometheus))

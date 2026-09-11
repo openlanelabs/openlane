@@ -684,6 +684,75 @@ SELECT 'T16f no-ctx messages invisible', count(*) = 0
 FROM task_messages;
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+
+-- ======== T17: rate cards (00020) — staff-only money, portal never sees it ========
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+SELECT set_config('app.portal_token_hash', '', false);
+INSERT INTO rate_cards (workspace_id, name)
+VALUES ('11111111-1111-1111-1111-111111111111', 'Acme Default 2026');
+INSERT INTO rate_card_rates (workspace_id, rate_card_id, role, hourly_rate)
+SELECT '11111111-1111-1111-1111-111111111111', rc.id, 'architect', 200.00
+FROM rate_cards rc WHERE rc.name = 'Acme Default 2026';
+INSERT INTO test_results
+SELECT 'T17a seed visible to acme ctx', count(*) = 1
+FROM rate_cards WHERE name = 'Acme Default 2026';
+
+-- beta ctx sees zero
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T17b beta sees no acme cards', count(*) = 0
+FROM rate_cards WHERE name = 'Acme Default 2026';
+INSERT INTO test_results
+SELECT 'T17c beta sees no acme rates', count(*) = 0
+FROM rate_card_rates rcr JOIN rate_cards rc ON rc.id = rcr.rate_card_id
+WHERE rcr.role = 'architect';
+
+-- beta cross-tenant INSERT blocked (FK passes but RLS hides → expect 42501)
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO rate_cards (workspace_id, name)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'sneak card');
+    RAISE EXCEPTION 'T17d expected 42501, got success';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL; -- RLS blocked as expected
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T17d cross-tenant insert blocked', TRUE;
+INSERT INTO test_results
+SELECT 'T17e sneak card did not land', count(*) = 0
+FROM rate_cards WHERE name = 'sneak card';
+
+-- portal ctx (token set, workspace empty) sees nothing — money is never portal-visible (§207)
+SELECT set_config('app.workspace_id', '', false);
+SELECT set_config('app.portal_token_hash', 'f'::text || repeat('0', 63), false);
+INSERT INTO test_results
+SELECT 'T17f portal sees no rate cards', count(*) = 0
+FROM rate_cards;
+INSERT INTO test_results
+SELECT 'T17g portal sees no rates', count(*) = 0
+FROM rate_card_rates;
+SELECT set_config('app.portal_token_hash', '', false);
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+-- negative rate rejected (§328 no negative capacity)
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    INSERT INTO rate_cards (workspace_id, name) VALUES ('11111111-1111-1111-1111-111111111111', 'NegCard');
+    INSERT INTO rate_card_rates (workspace_id, rate_card_id, role, hourly_rate)
+    SELECT '11111111-1111-1111-1111-111111111111', rc.id, 'pm', -50.00
+    FROM rate_cards rc WHERE rc.name = 'NegCard';
+    RAISE EXCEPTION 'T17h expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T17h negative rate rejected', TRUE;
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
