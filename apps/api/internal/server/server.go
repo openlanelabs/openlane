@@ -168,6 +168,8 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("GET /v1/invoices", authed(s.listInvoices))
 	mux.Handle("GET /v1/invoices/{id}", authed(s.getInvoice))
 	mux.Handle("PATCH /v1/invoices/{id}", authed(s.patchInvoice))
+	mux.Handle("GET /v1/invoices/{id}/export", authed(s.exportInvoice))
+	mux.Handle("GET /v1/invoices/export", authed(s.exportInvoicesBulk))
 	mux.Handle("POST /v1/people", authed(s.createPerson))
 	mux.Handle("GET /v1/people", authed(s.listPeople))
 	mux.Handle("PATCH /v1/people/{id}", authed(s.patchPerson))
