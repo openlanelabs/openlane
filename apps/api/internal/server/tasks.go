@@ -13,27 +13,33 @@ import (
 
 // staffTaskOut mirrors the contract's StaffTask schema.
 type staffTaskOut struct {
-	ID            string  `json:"id"`
-	ProjectID     string  `json:"project_id"`
-	Title         string  `json:"title"`
-	DescriptionMD *string `json:"description_md"`
-	OwnerType     string  `json:"owner_type"`
-	Status        string  `json:"status"`
-	DueAt         *string `json:"due_at"`
-	Required      bool    `json:"required"`
-	CustomerVis   bool    `json:"customer_visible"`
-	CompletedAt   *string `json:"completed_at"`
-	CreatedAt     string  `json:"created_at"`
+	ID             string   `json:"id"`
+	ProjectID      string   `json:"project_id"`
+	Title          string   `json:"title"`
+	DescriptionMD  *string  `json:"description_md"`
+	OwnerType      string   `json:"owner_type"`
+	Status         string   `json:"status"`
+	DueAt          *string  `json:"due_at"`
+	Required       bool     `json:"required"`
+	RequiredFields []string `json:"required_fields"`
+	CustomerVis    bool     `json:"customer_visible"`
+	CompletedAt    *string  `json:"completed_at"`
+	CreatedAt      string   `json:"created_at"`
 }
 
-const staffTaskCols = `id, project_id, title, description_md, owner_type, status, due_at, required, customer_visible, completed_at, created_at`
+const staffTaskCols = `id, project_id, title, description_md, owner_type, status, due_at, required, required_fields, customer_visible, completed_at, created_at`
 
 func scanStaffTask(row pgx.Row) (staffTaskOut, error) {
 	var t staffTaskOut
 	var created time.Time
 	var desc *string
 	var dueT, completedT *time.Time
-	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.OwnerType, &t.Status, &dueT, &t.Required, &t.CustomerVis, &completedT, &created)
+	if err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.OwnerType, &t.Status, &dueT, &t.Required, &t.RequiredFields, &t.CustomerVis, &completedT, &created); err != nil {
+		return t, err
+	}
+	if t.RequiredFields == nil {
+		t.RequiredFields = []string{}
+	}
 	t.DescriptionMD = desc
 	t.CreatedAt = created.UTC().Format(time.RFC3339)
 	if dueT != nil {
@@ -44,7 +50,7 @@ func scanStaffTask(row pgx.Row) (staffTaskOut, error) {
 		s := completedT.UTC().Format(time.RFC3339)
 		t.CompletedAt = &s
 	}
-	return t, err
+	return t, nil
 }
 
 var validStatuses = map[string]bool{
@@ -115,9 +121,12 @@ func (s *Server) listProjectTasks(w http.ResponseWriter, r *http.Request) {
 		var created time.Time
 		var desc *string
 		var dueT, compT *time.Time
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.OwnerType, &t.Status, &dueT, &t.Required, &t.CustomerVis, &compT, &created); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Title, &desc, &t.OwnerType, &t.Status, &dueT, &t.Required, &t.RequiredFields, &t.CustomerVis, &compT, &created); err != nil {
 			problem(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		if t.RequiredFields == nil {
+			t.RequiredFields = []string{}
 		}
 		t.DescriptionMD, t.CreatedAt = desc, created.UTC().Format(time.RFC3339)
 		if dueT != nil {
@@ -133,15 +142,67 @@ func (s *Server) listProjectTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// jsonOrNull: []byte(nil) when absent so pgx sends SQL NULL (PATCH
+// nil-vs-empty semantics — the 23502 house lesson inverted: absence keeps
+// the old value, [] sets empty).
+func jsonOrNull(v []string, absent bool) []byte {
+	if absent {
+		return nil
+	}
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// sanitizeRequiredFields: fixed key registry (custom fields come with
+// the P2 forms builder) — unknown keys dropped, deduped, order kept.
+func sanitizeRequiredFields(keys []string) []string {
+	if len(keys) == 0 {
+		return []string{}
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if (k == "description" || k == "due_at") && !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// missingRequiredFields: the Rocketlane gap closed — work cannot start
+// while required fields are unset. Empty = satisfied.
+func missingRequiredFields(t staffTaskOut, reqDescription *string, reqDueAt *string) []string {
+	var missing []string
+	for _, k := range t.RequiredFields {
+		switch k {
+		case "description":
+			d := t.DescriptionMD
+			if reqDescription != nil {
+				d = reqDescription
+			}
+			if d == nil || strings.TrimSpace(*d) == "" {
+				missing = append(missing, "description")
+			}
+		case "due_at":
+			if reqDueAt == nil && t.DueAt == nil {
+				missing = append(missing, "due_at")
+			}
+		}
+	}
+	return missing
+}
+
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title         string  `json:"title"`
-		DescriptionMD *string `json:"description_md"`
-		OwnerType     string  `json:"owner_type"`
-		Status        string  `json:"status"`
-		DueAt         *string `json:"due_at"`
-		Required      *bool   `json:"required"`
-		CustomerVis   *bool   `json:"customer_visible"`
+		Title          string   `json:"title"`
+		DescriptionMD  *string  `json:"description_md"`
+		OwnerType      string   `json:"owner_type"`
+		Status         string   `json:"status"`
+		DueAt          *string  `json:"due_at"`
+		Required       *bool    `json:"required"`
+		RequiredFields []string `json:"required_fields"`
+		CustomerVis    *bool    `json:"customer_visible"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		problem(w, http.StatusBadRequest, "malformed request body")
@@ -175,6 +236,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if req.CustomerVis != nil {
 		vis = *req.CustomerVis
 	}
+	req.RequiredFields = sanitizeRequiredFields(req.RequiredFields)
 
 	tx, ok := s.staffTx(r)
 	if !ok {
@@ -185,12 +247,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	t, err := scanStaffTask(tx.QueryRow(ctx, `
-		INSERT INTO tasks (workspace_id, project_id, title, description_md, owner_type, status, required, customer_visible, due_at)
-		SELECT NULLIF(current_setting('app.workspace_id', true), '')::uuid, p.id, $2, $3, $4, $5, $6, $7, $8::timestamptz
+		INSERT INTO tasks (workspace_id, project_id, title, description_md, owner_type, status, required, customer_visible, due_at, required_fields)
+		SELECT NULLIF(current_setting('app.workspace_id', true), '')::uuid, p.id, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::jsonb
 		FROM projects p
 		WHERE p.id = $1 AND p.deleted_at IS NULL
 		RETURNING `+staffTaskCols,
-		r.PathValue("id"), req.Title, req.DescriptionMD, req.OwnerType, req.Status, reqd, vis, req.DueAt))
+		r.PathValue("id"), req.Title, req.DescriptionMD, req.OwnerType, req.Status, reqd, vis, req.DueAt, mustJSON(req.RequiredFields)))
 	if err == pgx.ErrNoRows {
 		problem(w, http.StatusNotFound, "project not found")
 		return
@@ -220,12 +282,13 @@ func jsonString(s string) string {
 
 func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title         *string `json:"title"`
-		DescriptionMD *string `json:"description_md"`
-		Status        *string `json:"status"`
-		DueAt         *string `json:"due_at"`
-		CustomerVis   *bool   `json:"customer_visible"`
-		ReopenReason  *string `json:"reopen_reason"`
+		Title          *string   `json:"title"`
+		DescriptionMD  *string   `json:"description_md"`
+		Status         *string   `json:"status"`
+		RequiredFields *[]string `json:"required_fields"`
+		DueAt          *string   `json:"due_at"`
+		CustomerVis    *bool     `json:"customer_visible"`
+		ReopenReason   *string   `json:"reopen_reason"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		problem(w, http.StatusBadRequest, "malformed request body")
@@ -273,10 +336,23 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusBadRequest, "invalid transition "+cur.Status+"→"+to+" (§8.1 state machine)")
 			return
 		}
+		// required-fields gate (§516.8): work can't start or finish
+		// while required fields are unset — the incoming PATCH may
+		// satisfy them in the same request.
+		if to == "in_progress" || to == "done" {
+			if missing := missingRequiredFields(cur, req.DescriptionMD, req.DueAt); len(missing) > 0 {
+				problem(w, http.StatusBadRequest, "required fields missing: "+strings.Join(missing, ", "))
+				return
+			}
+		}
 	}
 
 	statusVal := req.Status
 
+	var reqFields []string
+	if req.RequiredFields != nil {
+		reqFields = sanitizeRequiredFields(*req.RequiredFields)
+	}
 	t, err := scanStaffTask(tx.QueryRow(ctx, `
 		UPDATE tasks SET
 		  title = COALESCE($2, title),
@@ -284,13 +360,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		  status = COALESCE($4, status),
 		  customer_visible = COALESCE($5, customer_visible),
 		  due_at = COALESCE($6::timestamptz, due_at),
+		  required_fields = CASE WHEN $7::jsonb IS NULL THEN required_fields ELSE $7::jsonb END,
 		  completed_at = CASE WHEN $4 = 'done' AND completed_at IS NULL THEN now()
 		                      WHEN $4 = 'todo' THEN NULL
 		                      ELSE completed_at END,
 		  updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING `+staffTaskCols,
-		id, req.Title, req.DescriptionMD, statusVal, req.CustomerVis, req.DueAt))
+		id, req.Title, req.DescriptionMD, statusVal, req.CustomerVis, req.DueAt, jsonOrNull(reqFields, req.RequiredFields == nil)))
 	if err == pgx.ErrNoRows {
 		problem(w, http.StatusNotFound, "task not found")
 		return

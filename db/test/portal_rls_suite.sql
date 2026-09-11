@@ -1094,6 +1094,20 @@ INSERT INTO test_results
 SELECT 'T22d unique (task_id, provider)', EXISTS (
   SELECT 1 FROM task_links WHERE issue_key = 'ACME-7');
 
+-- ---------- T23: project notes (00028) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO project_notes (workspace_id, project_id, author_user_id, body)
+SELECT '11111111-1111-1111-1111-111111111111', id, NULL, 'kickoff notes'
+FROM projects WHERE workspace_id = '11111111-1111-1111-1111-111111111111' LIMIT 1;
+INSERT INTO test_results
+SELECT 'T23a note roundtrip', EXISTS (
+  SELECT 1 FROM project_notes WHERE body = 'kickoff notes');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T23b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM project_notes WHERE body = 'kickoff notes');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

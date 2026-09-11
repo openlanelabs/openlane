@@ -146,6 +146,8 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.HandleFunc("POST /v1/integrations/jira/webhook", s.jiraWebhook)
 	mux.Handle("POST /v1/tasks/{id}/link", authed(s.linkTask))
 	mux.Handle("DELETE /v1/tasks/{id}/link", authed(s.unlinkTask))
+	mux.Handle("POST /v1/projects/{id}/notes", authed(s.createProjectNote))
+	mux.Handle("GET /v1/projects/{id}/notes", authed(s.listProjectNotes))
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
