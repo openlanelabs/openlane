@@ -143,7 +143,9 @@ func fetchICS(ctx context.Context, raw string) (io.ReadCloser, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	// request built from the PARSED, scheme-validated URL (not the raw
+	// string) — the parse + allowlist above is the mitigation
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
