@@ -1078,6 +1078,62 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /invoices/{id}/export:
+    get:
+      summary: Export one invoice as QuickBooks-compatible CSV
+      operationId: exportInvoice
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv:
+              schema: {type: string}
+        "404":
+          description: Not found
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+  /invoices/export:
+    get:
+      summary: Bulk export invoices intersecting a date window (QB CSV)
+      operationId: exportInvoicesBulk
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: from
+          in: query
+          required: true
+          schema: {type: string, format: date}
+        - name: to
+          in: query
+          required: true
+          schema: {type: string, format: date}
+      responses:
+        "200":
+          description: CSV download (non-void invoices)
+          content:
+            text/csv:
+              schema: {type: string}
+        "400":
+          description: Bad window
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
