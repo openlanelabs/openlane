@@ -920,6 +920,78 @@ END $$;
 INSERT INTO test_results
 SELECT 'T19f inverted period rejected', TRUE;
 
+
+-- ---------- T20: resourcing (00024) ----------
+INSERT INTO people (id, workspace_id, name, role, skills, bill_rate)
+VALUES ('99999999-9999-9999-9999-999999999999', '11111111-1111-1111-1111-111111111111',
+        'Anu', 'architect', ARRAY['kubernetes','go'], 180);
+
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO allocations (workspace_id, person_id, project_id, role, hours_week, starts_on, ends_on, kind)
+VALUES ('11111111-1111-1111-1111-111111111111', '99999999-9999-9999-9999-999999999999',
+        '55555555-5555-5555-5555-555555555555', 'architect', 20, CURRENT_DATE, CURRENT_DATE + 30, 'soft');
+
+-- T20a: tenant reads own person
+INSERT INTO test_results
+SELECT 'T20a tenant reads own person', EXISTS (
+  SELECT 1 FROM people WHERE id = '99999999-9999-9999-9999-999999999999');
+
+-- T20b: cross-ws invisible
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T20b cross-ws person invisible', NOT EXISTS (
+  SELECT 1 FROM people WHERE id = '99999999-9999-9999-9999-999999999999');
+
+-- T20c: cross-ws allocation UPDATE blocked
+DO $$
+BEGIN
+  BEGIN
+    UPDATE allocations SET hours_week = 80 WHERE person_id = '99999999-9999-9999-9999-999999999999';
+    IF (SELECT hours_week FROM allocations WHERE person_id = '99999999-9999-9999-9999-999999999999') = 80 THEN
+      RAISE EXCEPTION 'T20c expected RLS block';
+    END IF;
+  EXCEPTION WHEN insufficient_privilege OR others THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T20c cross-ws allocation update blocked', (
+  SELECT hours_week FROM allocations WHERE person_id = '99999999-9999-9999-9999-999999999999') = 20;
+
+-- T20d: over-capacity CHECK rejected
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    UPDATE people SET capacity_hrs = 100 WHERE id = '99999999-9999-9999-9999-999999999999';
+    RAISE EXCEPTION 'T20d expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T20d capacity over 80 rejected', TRUE;
+
+-- T20e: negative bill_rate rejected
+DO $$
+BEGIN
+  BEGIN
+    PERFORM set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+    UPDATE people SET bill_rate = -1 WHERE id = '99999999-9999-9999-9999-999999999999';
+    RAISE EXCEPTION 'T20e expected check_violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T20e negative bill_rate rejected', TRUE;
+
+-- T20f: skills overlap query works (&& operator)
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T20f skills && filter', EXISTS (
+  SELECT 1 FROM people WHERE skills && ARRAY['go'] AND id = '99999999-9999-9999-9999-999999999999');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
