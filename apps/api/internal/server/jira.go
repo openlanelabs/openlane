@@ -37,6 +37,10 @@ var jiraStatusToOpenLane = map[string]string{
 }
 
 // openLaneToJiraNames: transition names to look for when pushing out.
+// (used by pushJiraStatus — exercised via the integration suite; the
+// worker carries its own copy per the cross-app JSON contract)
+//
+//nolint:unused
 var openLaneToJiraNames = map[string][]string{
 	"in_progress": {"In Progress", "Start Progress"},
 	"done":        {"Done", "Close Issue"},
@@ -513,9 +517,15 @@ func (s *Server) jiraWebhook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "synced"})
 }
 
+// pushJiraStatus: outbound transition — the api-side twin of the worker's
+// Work(); exercised by the integration suite (the worker app carries its
+// own copy per the cross-app JSON contract, #55).
+//
 // pushJiraStatus: outbound transition (called by the River worker).
 // Guard: skip when last_synced_at is newer than the task's updated_at
 // (that update CAME from jira — pushing it back would loop).
+//
+//nolint:unused
 func (s *Server) pushJiraStatus(ctx context.Context, wsID, taskID, issueKey, newStatus string) error {
 	var instanceURL, patB64 string
 	if err := s.pool.QueryRow(ctx, `
@@ -568,7 +578,7 @@ func (s *Server) pushJiraStatus(ctx context.Context, wsID, taskID, issueKey, new
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return errors.New("jira transitions status " + resp.Status)
 	}
@@ -605,7 +615,7 @@ func (s *Server) pushJiraStatus(ctx context.Context, wsID, taskID, issueKey, new
 	if err != nil {
 		return err
 	}
-	defer presp.Body.Close()
+	defer func() { _ = presp.Body.Close() }()
 	if presp.StatusCode != http.StatusNoContent && presp.StatusCode != http.StatusOK {
 		return errors.New("jira transition status " + presp.Status)
 	}
