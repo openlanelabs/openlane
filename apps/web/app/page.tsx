@@ -25,6 +25,22 @@ type PendingTime = {
   note: string;
 };
 
+type PortfolioMargins = {
+  projects: {
+    project_id: string;
+    logged_hours: number;
+    cost: number;
+    billed: number;
+    margin: number | null;
+  }[];
+  totals: {
+    logged_hours: number;
+    cost: number;
+    billed: number;
+    margin: number | null;
+  };
+};
+
 function healthDot(h: string) {
   const c = h === "green" ? "bg-success" : h === "amber" ? "bg-warn" : h === "red" ? "bg-danger" : "bg-muted";
   return <span className={`inline-block h-2 w-2 rounded-full ${c}`} aria-label={`health: ${h}`} />;
@@ -39,6 +55,7 @@ export default function Dashboard() {
   const [pending, setPending] = useState<PendingTime[] | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null); // entry id with open reason box
   const [reason, setReason] = useState("");
+  const [margins, setMargins] = useState<PortfolioMargins | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -69,8 +86,16 @@ export default function Dashboard() {
   }, []);
   useEffect(() => {
     if (!me) return;
-    if (isManager) void loadPending();
-    else setPending(null);
+    if (isManager) {
+      void loadPending();
+      void api("/margins").then(async (res) => {
+        if (res.ok) setMargins(await res.json());
+        else setMargins(null);
+      });
+    } else {
+      setPending(null);
+      setMargins(null);
+    }
   }, [me, isManager, loadPending]);
 
   async function decideTime(id: string, status: "approved" | "rejected", why?: string) {
@@ -125,6 +150,33 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
+        {margins !== null && margins.totals.billed > 0 && (
+          <section aria-label="Portfolio margins" className="rounded-[10px] border border-border bg-surface p-4">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-muted">
+              <span>
+                Billed <strong className="text-text">${Math.round(margins.totals.billed).toLocaleString()}</strong>
+              </span>
+              <span>
+                Cost <strong className="text-text">${Math.round(margins.totals.cost).toLocaleString()}</strong>
+              </span>
+              <span>
+                Logged <strong className="text-text">{Math.round(margins.totals.logged_hours)}h</strong>
+              </span>
+              <span
+                className={`rounded-[10px] px-2 py-0.5 font-medium ${
+                  margins.totals.margin !== null && margins.totals.margin >= 0.5
+                    ? "bg-success/10 text-success"
+                    : margins.totals.margin !== null && margins.totals.margin >= 0.2
+                      ? "bg-warn/10 text-warn"
+                      : "text-danger"
+                }`}
+              >
+                Margin {margins.totals.margin !== null ? `${Math.round(margins.totals.margin * 100)}%` : "—"}
+              </span>
+            </div>
+          </section>
+        )}
+
         {pending !== null && pending.length > 0 && (
           <section aria-label="Pending time approvals" className="rounded-[10px] border border-border bg-surface p-4">
             <h2 className="text-sm font-semibold text-text">Pending time ({pending.length})</h2>
@@ -224,6 +276,21 @@ export default function Dashboard() {
                     <span className="shrink-0 rounded-[10px] border border-border px-2 py-0.5 text-xs text-muted capitalize">
                       {p.status}
                     </span>
+                    {(() => {
+                      const m = margins?.projects.find((x) => x.project_id === p.id);
+                      if (!m || m.margin === null) return null;
+                      const pct = Math.round(m.margin * 100);
+                      return (
+                        <span
+                          className={`shrink-0 rounded-[10px] px-2 py-0.5 text-xs font-medium ${
+                            m.margin >= 0.5 ? "bg-success/10 text-success" : m.margin >= 0.2 ? "bg-warn/10 text-warn" : "text-danger"
+                          }`}
+                          title={`billed $${Math.round(m.billed)} · cost $${Math.round(m.cost)}`}
+                        >
+                          {pct}% margin
+                        </span>
+                      );
+                    })()}
                   </div>
                   <div className="mt-3 flex items-center gap-3">
                     <div className="h-2 flex-1 overflow-hidden rounded-full bg-border" role="progressbar" aria-valuenow={p.progress_pct} aria-valuemin={0} aria-valuemax={100}>
