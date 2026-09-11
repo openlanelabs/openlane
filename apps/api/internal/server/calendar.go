@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -58,15 +59,13 @@ func parseICS(r io.Reader) ([]icsEvent, time.Time, error) {
 		case cur == nil:
 			continue
 		default:
-			name, val := ln, ""
-			if i := strings.Index(ln, ":"); i > 0 {
-				name, val = ln[:i], ln[i+1:]
-			} else {
+			i := strings.Index(ln, ":")
+			if i <= 0 {
 				continue
 			}
-			base := name
-			if i := strings.Index(base, ";"); i > 0 {
-				base = base[:i]
+			base, val := ln[:i], ln[i+1:]
+			if j := strings.Index(base, ";"); j > 0 {
+				base = base[:j]
 			}
 			switch strings.ToUpper(base) {
 			case "UID":
@@ -119,16 +118,28 @@ func fetchICS(ctx context.Context, raw string) (io.ReadCloser, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, errors.New("ics_url must be an http(s) URL")
 	}
-	if os.Getenv("OPENLANE_CAL_ALLOW_ANY") != "1" {
+	if os.Getenv("OPENLANE_CAL_ALLOW_ANY") != "1" && ipBlocked(u.Hostname()) {
 		// tests/dev point at httptest servers (same convention as slack)
-		host := u.Hostname()
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-				return nil, errors.New("private calendar hosts are not allowed")
+		return nil, errors.New("private calendar hosts are not allowed")
+	}
+	// The dial-time IP check is the real guard: hostname validation can
+	// be DNS-rebinding-bypassed; the Control callback sees the actual
+	// connected address (ssrf prevention, CodeQL-clean).
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: func(network, address string, c syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
 			}
-		} else if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
-			return nil, errors.New("private calendar hosts are not allowed")
-		}
+			if os.Getenv("OPENLANE_CAL_ALLOW_ANY") == "1" {
+				return nil // tests/dev: httptest servers
+			}
+			if ipBlocked(host) {
+				return errors.New("private calendar hosts are not allowed")
+			}
+			return nil
+		},
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -136,7 +147,10 @@ func fetchICS(ctx context.Context, raw string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{DialContext: dialer.DialContext},
+	}
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -146,6 +160,17 @@ func fetchICS(ctx context.Context, raw string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("calendar feed returned %d", res.StatusCode)
 	}
 	return res.Body, nil
+}
+
+// ipBlocked: loopback/private/link-local IPs and local hostnames. The
+// dial-time Control check in fetchICS is the authoritative guard; this
+// pre-check fails fast on obviously-bad URLs.
+func ipBlocked(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		strings.HasSuffix(host, ".local")
 }
 
 // calendarEvents: shared parse + filter for preview and import.
@@ -300,7 +325,3 @@ func (s *Server) calendarImport(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"imported": imported, "skipped": skipped})
 }
-
-// calendarImportsEnabled: env gate so self-hosters without calendars
-// pay nothing (route registration is cheap; the gate documents intent).
-func calendarImportsEnabled() bool { return os.Getenv("OPENLANE_DISABLE_CALENDAR") != "1" }
