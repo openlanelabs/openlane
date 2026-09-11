@@ -35,6 +35,23 @@ type CSAT = {
   response_rate: number;
 };
 
+type Budget = {
+  budget_hours: number | null;
+  billing_type: string;
+  logged_minutes: number;
+  logged_hours: number;
+  pct: number | null;
+  status: "unbudgeted" | "ok" | "warn50" | "warn80" | "over";
+};
+
+type Invoice = {
+  id: string;
+  status: "draft" | "sent" | "paid" | "void";
+  period_start: string;
+  period_end: string;
+  subtotal: string;
+};
+
 const NEXT: Record<string, string> = {
   todo: "in_progress",
   in_progress: "review",
@@ -49,6 +66,10 @@ export default function ProjectDetail() {
   const [approvals, setApprovals] = useState<Approval[] | null>(null);
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [csat, setCSAT] = useState<CSAT | null>(null);
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[] | null>(null);
+  const [budgetHours, setBudgetHours] = useState("");
+  const [billingType, setBillingType] = useState("");
   const [approvalTitle, setApprovalTitle] = useState("");
   const [docTitle, setDocTitle] = useState("");
   const [docBody, setDocBody] = useState("");
@@ -63,6 +84,8 @@ export default function ProjectDetail() {
       api(`/projects/${id}/approvals`),
       api(`/projects/${id}/docs`),
       api(`/projects/${id}/csat`),
+      api(`/projects/${id}/budget`),
+      api(`/invoices`),
     ]);
     if (results[0].status === "fulfilled" && results[0].value.status === 401) { router.push("/login"); return; }
     if (results[0].status === "fulfilled" && results[0].value.ok) setProject(await results[0].value.json());
@@ -71,6 +94,14 @@ export default function ProjectDetail() {
     if (results[2].status === "fulfilled" && results[2].value.ok) setApprovals(await results[2].value.json());
     if (results[3].status === "fulfilled" && results[3].value.ok) setDocs(await results[3].value.json());
     if (results[4].status === "fulfilled" && results[4].value.ok) setCSAT(await results[4].value.json());
+    if (results[5].status === "fulfilled" && results[5].value.ok) {
+      const b = (await results[5].value.json()) as Budget;
+      setBudget(b);
+      if (b.budget_hours !== null) setBudgetHours(String(b.budget_hours));
+      setBillingType(b.billing_type);
+    } else setBudget(null);
+    if (results[6].status === "fulfilled" && results[6].value.ok) setInvoices(await results[6].value.json());
+    else setInvoices([]);
   }, [id, router]);
 
   useEffect(() => { void load(); }, [load]);
@@ -120,6 +151,43 @@ export default function ProjectDetail() {
       body: JSON.stringify({ title, content_md: docBody }),
     });
     if (res.ok) await load();
+  }
+
+
+  async function saveBudget(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    const hours = budgetHours.trim();
+    const body: Record<string, string> = {};
+    if (hours) body.budget_hours = hours;
+    if (billingType) body.billing_type = billingType;
+    if (Object.keys(body).length === 0) return;
+    const res = await api(`/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const problem = await res.json().catch(() => ({ title: "" }));
+      setErr(problem.title || "Couldn't save the budget.");
+      return;
+    }
+    await load();
+  }
+
+  async function moveInvoice(inv: Invoice, next: string) {
+    setErr("");
+    const res = await api(`/invoices/${inv.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: next }),
+    });
+    if (!res.ok) {
+      const problem = await res.json().catch(() => ({ title: "" }));
+      setErr(problem.title || "That transition isn't allowed.");
+      return;
+    }
+    await load();
   }
 
   async function advance(t: Task) {
@@ -321,6 +389,101 @@ export default function ProjectDetail() {
                 <li key={i} className="text-sm text-text">
                   {r.score >= 4 ? "😄" : r.score === 3 ? "😐" : "😞"} {r.score}/5
                   {r.comment && <span className="text-muted"> — “{r.comment}”</span>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {budget && (
+          <section aria-label="Budget" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Budget</h2>
+            <div className="mt-2 flex items-center gap-3">
+              <span
+                className={`rounded-[10px] px-2 py-0.5 text-xs font-medium ${
+                  budget.status === "over"
+                    ? "bg-danger/10 text-danger"
+                    : budget.status.startsWith("warn")
+                      ? "bg-warn/10 text-warn"
+                      : "bg-border text-muted"
+                }`}
+              >
+                {budget.status === "unbudgeted" ? "No budget" : `${budget.pct}% · ${budget.status}`}
+              </span>
+              <span className="text-xs text-muted">
+                {budget.logged_hours}h logged
+                {budget.budget_hours !== null ? ` of ${budget.budget_hours}h` : ""}
+              </span>
+            </div>
+            <form onSubmit={saveBudget} className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                value={budgetHours}
+                onChange={(e) => setBudgetHours(e.target.value)}
+                placeholder="Budget hours"
+                aria-label="Budget hours"
+                inputMode="numeric"
+                className="w-28 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <select
+                value={billingType}
+                onChange={(e) => setBillingType(e.target.value)}
+                aria-label="Billing type"
+                className="rounded-[10px] border border-border bg-bg px-2 py-2 text-sm text-text"
+              >
+                <option value="tm">Time &amp; materials</option>
+                <option value="fixed">Fixed</option>
+                <option value="retainer">Retainer</option>
+              </select>
+              <button
+                disabled={project?.status === "completed"}
+                className="rounded-[10px] border border-border px-3 py-2 text-xs font-medium text-text disabled:opacity-50"
+              >
+                Save
+              </button>
+            </form>
+          </section>
+        )}
+
+        {invoices !== null && (
+          <section aria-label="Invoices" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Invoices</h2>
+            <ul className="mt-3 space-y-2">
+              {invoices.length === 0 && <li className="text-xs text-muted">None yet.</li>}
+              {invoices.map((inv) => (
+                <li key={inv.id} className="flex items-center justify-between gap-2 rounded-[10px] border border-border bg-bg p-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-text">
+                      {inv.period_start} → {inv.period_end}
+                    </p>
+                    <span
+                      className={`text-xs ${
+                        inv.status === "paid"
+                          ? "text-success"
+                          : inv.status === "void"
+                            ? "text-muted line-through"
+                            : "text-warning"
+                      }`}
+                    >
+                      {inv.status} · ${inv.subtotal}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    {inv.status === "draft" && (
+                      <button onClick={() => moveInvoice(inv, "sent")} className="rounded-[10px] border border-primary px-2 py-1 text-xs font-medium text-primary hover:bg-primary hover:text-white">
+                        Mark sent
+                      </button>
+                    )}
+                    {inv.status === "sent" && (
+                      <button onClick={() => moveInvoice(inv, "paid")} className="rounded-[10px] border border-success px-2 py-1 text-xs font-medium text-success hover:bg-success hover:text-white">
+                        Mark paid
+                      </button>
+                    )}
+                    {inv.status !== "void" && inv.status !== "paid" && (
+                      <button onClick={() => moveInvoice(inv, "void")} className="rounded-[10px] border border-border px-2 py-1 text-xs text-muted">
+                        Void
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
