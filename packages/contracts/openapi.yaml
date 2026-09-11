@@ -2369,6 +2369,161 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /integrations/jira:
+    put:
+      summary: Configure Jira two-way integration
+      operationId: putJiraSettings
+      description: |
+        Webhook secret and PAT (personal access token) sealed with
+        AES-256-GCM. PAT enables outbound transitions; without it the
+        integration is inbound-only.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [webhook_secret]
+              properties:
+                instance_url:
+                  type: string
+                webhook_secret:
+                  type: string
+                  minLength: 16
+                pat:
+                  type: string
+                  description: Jira PAT for outbound transitions (optional)
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  instance_url:
+                    type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    get:
+      summary: Jira integration status (never echoes secrets)
+      operationId: getJiraSettings
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured:
+                    type: boolean
+                  instance_url:
+                    type: string
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /integrations/jira/webhook:
+    post:
+      summary: Jira issue event webhook (HMAC-verified, unauthenticated)
+      operationId: jiraWebhook
+      description: |
+        Machine-to-machine: HMAC-SHA256 over the raw body in the
+        X-OpenLane-Signature header (base64). issue_updated maps Jira
+        status to the task state machine (Jira wins for eng fields per
+        spec 336); comment_created ingests as a task message (deduped by
+        Jira comment id). Unknown events and unlinked issues are
+        ignored — no oracle.
+      parameters:
+        - name: ws
+          in: query
+          required: true
+          description: Workspace slug
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: "Accepted (status: synced | no link | ignored)"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [synced, "no link", ignored]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /tasks/{id}/link:
+    post:
+      summary: Link a task to a Jira issue
+      operationId: linkTask
+      description: |
+        Validates the issue exists via the Jira REST API (when a PAT is
+        configured) before linking. Re-linking upserts.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issue_key]
+              properties:
+                issue_key:
+                  type: string
+                  minLength: 1
+                  maxLength: 60
+      responses:
+        "201":
+          description: Linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issue_key:
+                    type: string
+                  url:
+                    type: string
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Unlink a task from Jira
+      operationId: unlinkTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204": { description: Unlinked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /projects/{id}/approvals:
     post:
       summary: Request an approval from the customer

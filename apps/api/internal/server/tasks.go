@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -312,6 +314,13 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// jira link (if any) read in-tx: post-commit RLS needs re-scoping
+	var issueKey string
+	if err := tx.QueryRow(ctx, `
+		SELECT issue_key FROM task_links WHERE task_id = $1::uuid AND provider = 'jira'`, id).Scan(&issueKey); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
@@ -319,6 +328,14 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if t.Status == "done" && cur.Status != "done" {
 		s.notifyEvent(ctx, workspaceFromCtx(ctx), "task.completed",
 			"✅ Task completed: "+t.Title, t.ID)
+	}
+	// outbound jira sync: status change on a linked task → River push
+	if req.Status != nil && *req.Status != cur.Status && issueKey != "" && s.river != nil {
+		if _, err := s.river.Insert(ctx, JiraStatusPushArgs{
+			WorkspaceID: workspaceFromCtx(ctx), TaskID: id, IssueKey: issueKey, Status: *req.Status,
+		}, nil); err != nil {
+			log.Printf("jira push enqueue: %v", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, t)
 }
