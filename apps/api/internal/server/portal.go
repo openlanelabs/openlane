@@ -243,8 +243,9 @@ func (s *Server) revokePortalLink(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getPortalSession(ctx context.Context, tx pgx.Tx, w http.ResponseWriter, r *http.Request) (int, error) {
 	out := sessionFromCtx(ctx)
-	th := hashToken(r.PathValue("token"))
-	if _, err := tx.Exec(ctx, `UPDATE portal_links SET last_used_at = now() WHERE token_hash = $1`, th); err != nil {
+	// SECURITY DEFINER: tenant RLS sees zero rows under portal ctx (ADR-0007);
+	// the touch fn is the only portal-writable path onto portal_links.
+	if _, err := tx.Exec(ctx, `SELECT portal_link_touch($1)`, hashToken(r.PathValue("token"))); err != nil {
 		return http.StatusInternalServerError, errQuiet
 	}
 	if err := tx.Commit(ctx); err != nil {
