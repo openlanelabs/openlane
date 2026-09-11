@@ -2524,6 +2524,66 @@ paths:
         "204": { description: Unlinked }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /projects/{id}/notes:
+    post:
+      summary: Add a timestamped project note
+      operationId: createProjectNote
+      description: |
+        Append-only notes feed with author + created_at per row (§516.8 —
+        the competitor complaint: notes without who/when).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectNote"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      summary: List project notes (newest first)
+      operationId: listProjectNotes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Notes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectNote"
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /projects/{id}/approvals:
     post:
       summary: Request an approval from the customer
@@ -3669,6 +3729,12 @@ components:
         status: {type: string, enum: [todo, in_progress, blocked, review, done, waived]}
         due_at: {type: [string, "null"], format: date-time}
         required: {type: boolean}
+        required_fields:
+          type: array
+          items:
+            type: string
+            enum: [description, due_at]
+          description: Fields that must be filled before work starts (Rocketlane gap, §516.8)
         customer_visible: {type: boolean}
     StaffTask:
       allOf:
@@ -3690,6 +3756,14 @@ components:
         start_date: {type: [string, "null"], format: date}
         target_go_live: {type: [string, "null"], format: date}
         progress_pct: {type: integer, description: Computed — done+waived / total tasks}
+        created_at: {type: string, format: date-time}
+    ProjectNote:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        project_id: {type: string, format: uuid}
+        author: {type: string, description: Display name (Unknown when the user is gone)}
+        body: {type: string}
         created_at: {type: string, format: date-time}
     Budget:
       type: object
