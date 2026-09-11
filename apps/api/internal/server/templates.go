@@ -335,7 +335,7 @@ func (s *Server) createProjectFromTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.notifyEvent(ctx, workspaceFromCtx(ctx), "project.created_from_template",
-		"🚀 Project created from template: "+p.Name)
+		"🚀 Project created from template: "+p.Name, p.ID)
 	writeJSON(w, http.StatusCreated, p)
 }
 

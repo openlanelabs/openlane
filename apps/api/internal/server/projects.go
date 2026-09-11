@@ -110,7 +110,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.notifyEvent(ctx, workspaceFromCtx(ctx), "project.created",
-		"🚀 Project created: "+p.Name)
+		"🚀 Project created: "+p.Name, p.ID)
 	writeJSON(w, http.StatusCreated, p)
 }
 

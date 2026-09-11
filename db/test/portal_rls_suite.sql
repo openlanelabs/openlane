@@ -590,6 +590,39 @@ WHERE p.id = '55555555-5555-5555-5555-555555555555';
 SELECT set_config('app.portal_token_hash', '', false);
 SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
 
+-- ---------- T15: automations (00017) ----------
+-- staff seed: one active + one deleted automation
+INSERT INTO automations (workspace_id, name, trigger_event, condition, action)
+VALUES
+  ('11111111-1111-1111-1111-111111111111', 'Notify on task done', 'task.completed', '{}'::jsonb,
+   '{"type":"slack_message"}'::jsonb),
+  ('11111111-1111-1111-1111-111111111111', 'Old rule', 'project.created', '{}'::jsonb,
+   '{"type":"create_task","project_id":"55555555-5555-5555-5555-555555555555","title":"x"}'::jsonb);
+UPDATE automations SET deleted_at = now() WHERE name = 'Old rule';
+INSERT INTO automation_runs (workspace_id, automation_id, event, status, detail)
+SELECT '11111111-1111-1111-1111-111111111111', id, 'task.completed', 'completed', 'slack_message queued'
+FROM automations WHERE name = 'Notify on task done';
+
+INSERT INTO test_results
+SELECT 'T15a own-ws automations visible', count(*) = 1
+FROM automations WHERE workspace_id = '11111111-1111-1111-1111-111111111111' AND deleted_at IS NULL;
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T15b cross-tenant automations invisible', count(*) = 0
+FROM automations WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
+INSERT INTO test_results
+SELECT 'T15c runs history readable + scoped', count(*) = 1
+FROM automation_runs;
+
+SELECT set_config('app.workspace_id', '', false);
+INSERT INTO test_results
+SELECT 'T15d no-ctx automations invisible', count(*) = 0
+FROM automations;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
