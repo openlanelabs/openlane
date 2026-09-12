@@ -87,6 +87,16 @@ type TimeReminderArgs struct {
 
 func (TimeReminderArgs) Kind() string { return "time_reminder" }
 
+// TimeGuardianArgs: §15.5 — one scan of one calendar day. The window
+// tag (scan-YYYYMMDD) dedupes the 15m ticks inside a day; unique-by-args
+// makes it restart-safe.
+type TimeGuardianArgs struct {
+	Window string `json:"window" river:"unique"` // e.g. scan-20260912
+	Day    string `json:"day"`                   // YYYY-MM-DD
+}
+
+func (TimeGuardianArgs) Kind() string { return "time_guardian" }
+
 // JiraStatusPushArgs mirrors the api package struct (JSON coupling).
 type JiraStatusPushArgs struct {
 	WorkspaceID string `json:"workspace_id"`
@@ -532,6 +542,87 @@ func (w *TimeReminderWorker) Work(ctx context.Context, job *river.Job[TimeRemind
 	return rows.Err()
 }
 
+// TimeGuardianWorker: §15.5 — flags, never auto-fixes. One digest per
+// Slack-configured + agents-enabled workspace: missing weekday time,
+// >12h days, from yesterday. One slack_notify job + one agent_runs row
+// per workspace (the audit rail from day one).
+type TimeGuardianWorker struct {
+	river.WorkerDefaults[TimeGuardianArgs]
+	pool *pgxpool.Pool
+}
+
+func (w *TimeGuardianWorker) Work(ctx context.Context, job *river.Job[TimeGuardianArgs]) error {
+	// jitter (§455): spread the herd across the hour
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(rand.Intn(60)) * time.Second): //nolint:gosec // jitter, not crypto
+	}
+
+	day, err := time.Parse("2006-01-02", job.Args.Day)
+	if err != nil {
+		return err
+	}
+
+	rows, err := w.pool.Query(ctx, `SELECT workspace_id::text, slack_url, flags FROM time_guardian_digest($1)`, day)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var wsID, url string
+		var flags []byte
+		if err := rows.Scan(&wsID, &url, &flags); err != nil {
+			return err
+		}
+		var parsed []struct {
+			Kind   string `json:"kind"`
+			Who    string `json:"who"`
+			Detail string `json:"detail"`
+		}
+		if err := json.Unmarshal(flags, &parsed); err != nil {
+			return err
+		}
+		lines := make([]string, 0, len(parsed))
+		for _, f := range parsed {
+			lines = append(lines, "• "+f.Detail)
+		}
+
+		// own short tx: enqueue delivery + write the agent_runs row —
+		// scoped, so audit rows land with tenant context (house rule).
+		tx, err := w.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.workspace_id', $1, true)", wsID); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO river_job (queue, kind, state, args, created_at, max_attempts, metadata)
+			VALUES ('default', 'slack_notify', 'available',
+			        jsonb_build_object('workspace_id', $1, 'url', $2, 'text', $3),
+			        now(), 25, '{}'::jsonb)`,
+			wsID, url, "🛡️ Time Guardian — yesterday:\n"+strings.Join(lines, "\n")); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO agent_runs (workspace_id, agent, status, model, input_ref, output_ref, finished_at)
+			VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'guardian', 'succeeded', 'none',
+			        $1, $2, now())`,
+			"guardian:"+job.Args.Day, fmt.Sprintf("%d flags", len(parsed))); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 type SlackNotifyWorker struct {
 	river.WorkerDefaults[SlackNotifyArgs]
 	client *http.Client
@@ -779,6 +870,7 @@ func main() {
 	river.AddWorker(workers, &HSProjectCreateWorker{pool: pool, river: rc})
 	river.AddWorker(workers, &JiraStatusPushWorker{pool: pool})
 	river.AddWorker(workers, &TimeReminderWorker{pool: pool})
+	river.AddWorker(workers, &TimeGuardianWorker{pool: pool})
 	river.AddWorker(workers, &CalendarImportWorker{pool: pool})
 
 	rc, err = river.NewClient(riverpgxv5.New(pool), &river.Config{
@@ -797,6 +889,23 @@ func main() {
 						return nil, nil
 					}
 					return TimeReminderArgs{Window: w}, &river.InsertOpts{
+						UniqueOpts: river.UniqueOpts{ByArgs: true},
+					}
+				},
+				nil),
+			// Time Guardian: daily 09:00 UTC hour; the window tag
+			// (scan-YYYYMMDD) + unique-by-args dedupes ticks + restarts.
+			river.NewPeriodicJob(
+				river.PeriodicInterval(15*time.Minute),
+				func() (river.JobArgs, *river.InsertOpts) {
+					now := time.Now().UTC()
+					if now.Hour() != 9 {
+						return nil, nil
+					}
+					return TimeGuardianArgs{
+						Window: "scan-" + now.Format("20060102"),
+						Day:    now.AddDate(0, 0, -1).Format("2006-01-02"),
+					}, &river.InsertOpts{
 						UniqueOpts: river.UniqueOpts{ByArgs: true},
 					}
 				},
