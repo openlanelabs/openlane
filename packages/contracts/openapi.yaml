@@ -3457,6 +3457,68 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /agents/llm:
+    put:
+      summary: Configure the BYO-LLM provider for this workspace (P2 §15)
+      description: >
+        Admin-only. provider: openai (also Azure via base_url), anthropic,
+        or ollama (self-hosted, key unused, data never leaves the VPC).
+        api_key is sealed AES-256-GCM at rest (never returned). Empty
+        api_key on update keeps the stored key. Model router: cheap_model
+        for nudges/summaries, smart_model for migration/doc drafts; every
+        LLM call meters tokens to agent_runs.cost_cents.
+      operationId: putLLMConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, base_url, cheap_model, smart_model]
+              properties:
+                provider: {type: string, enum: [openai, anthropic, ollama]}
+                base_url: {type: string, description: "absolute http(s) URL; host must be allowlisted for dials (OPENLANE_LLM_ALLOWED_HOSTS)"}
+                cheap_model: {type: string}
+                smart_model: {type: string}
+                api_key: {type: string, description: "write-only; required for openai/anthropic on first save"}
+      responses:
+        "200": {description: Saved}
+        "400": {description: "validation failed (see Problem body)"}
+        "403":
+          description: Admin role required
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+    get:
+      summary: LLM config presence + models (never the key)
+      operationId: getLLMConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Config (configured=false when none)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: {type: boolean}
+                  provider: {type: string}
+                  base_url: {type: string}
+                  cheap_model: {type: string}
+                  smart_model: {type: string}
   /agents/signals:
     get:
       summary: Signals — active risks with stories + evidence (P2 §15.6)
@@ -3476,6 +3538,11 @@ paths:
           in: header
           required: true
           schema: {type: string, format: uuid}
+        - name: narrate
+          in: query
+          required: false
+          schema: {type: string, enum: ["1"]}
+          description: "cheap-model LLM pass drafts a 2-sentence portfolio note (requires llm config; degrades silently)"
       responses:
         "200":
           description: Signals (red first)
@@ -3501,6 +3568,10 @@ paths:
                         evidence:
                           type: object
                           description: Ids, counts, and timestamps that triggered the signal
+                  narrative:
+                    type: string
+                    description: LLM-drafted portfolio note when narrate=1 and a provider is configured
+
         "403": {$ref: "#/components/responses/Forbidden"}
         "503":
           description: Agents disabled for this workspace (kill switch)
