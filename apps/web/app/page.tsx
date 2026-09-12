@@ -56,6 +56,9 @@ export default function Dashboard() {
   const [rejecting, setRejecting] = useState<string | null>(null); // entry id with open reason box
   const [reason, setReason] = useState("");
   const [margins, setMargins] = useState<PortfolioMargins | null>(null);
+  const [signals, setSignals] = useState<
+    { kind: string; severity: string; project_id: string; project: string; title: string }[] | null
+  >(null);
 
   useEffect(() => {
     (async () => {
@@ -92,9 +95,14 @@ export default function Dashboard() {
         if (res.ok) setMargins(await res.json());
         else setMargins(null);
       });
+      void api("/agents/signals").then(async (res) => {
+        if (res.ok) setSignals((await res.json()).signals ?? []);
+        else setSignals(null); // 503 kill switch or 403: hide
+      });
     } else {
       setPending(null);
       setMargins(null);
+      setSignals(null);
     }
   }, [me, isManager, loadPending]);
 
@@ -160,6 +168,30 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
+        {isManager && signals !== null && signals.length > 0 && (
+          <section aria-label="Signals" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Signals</h2>
+            <ul className="mt-2 space-y-2">
+              {signals.slice(0, 6).map((s, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <span
+                    className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                      s.severity === "red" ? "bg-danger/10 text-danger" : "bg-warn/10 text-warn"
+                    }`}
+                  >
+                    {s.kind.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-muted">
+                    <a href={`/projects/${s.project_id}`} className="text-text hover:underline">
+                      {s.project}
+                    </a>{" "}
+                    — {s.title}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {margins !== null && margins.totals.billed > 0 && (
           <section aria-label="Portfolio margins" className="rounded-[10px] border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-muted">

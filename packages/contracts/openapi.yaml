@@ -3457,6 +3457,56 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /agents/signals:
+    get:
+      summary: Signals — active risks with stories + evidence (P2 §15.6)
+      description: >
+        Deterministic v1 rule set, computed on read: portal_silent
+        (unused portal link 7d+ AND overdue customer work),
+        overdue_cluster (3+ overdue customer tasks), budget_burn
+        (>=80% of budget hours logged; red at 100%), margin_dip
+        (§324 margin < 20%), approval_stale (pending > 7d). Every
+        signal carries a story and evidence links. Manager role and
+        above; honors the agents kill switch.
+      operationId: listSignals
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Signals (red first)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind:
+                          type: string
+                          enum: [portal_silent, overdue_cluster, budget_burn, margin_dip, approval_stale]
+                        severity:
+                          type: string
+                          enum: [red, warn]
+                        project_id: {type: string, format: uuid}
+                        project: {type: string}
+                        title: {type: string}
+                        evidence:
+                          type: object
+                          description: Ids, counts, and timestamps that triggered the signal
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503":
+          description: Agents disabled for this workspace (kill switch)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /agents/runs:
     get:
       summary: List agent runs (audit surface)
