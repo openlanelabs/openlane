@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 )
 
 // Signals v1 (P2 §15.6 + §14): deterministic rules, each signal with a
@@ -159,6 +160,38 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?narrate=1 (manager+, P2 §15.6): one cheap-model LLM pass that
+	// drafts a two-sentence portfolio note. Deterministic titles stay —
+	// the LLM never replaces evidence. No config / provider failure →
+	// degrade silently (narrative omitted), agent_run records the miss.
+	narrative := ""
+	if r.URL.Query().Get("narrate") == "1" && len(out) > 0 {
+		var lines []string
+		for i, sig := range out {
+			if i >= 10 {
+				break
+			}
+			lines = append(lines, sig.Severity+" "+sig.Kind+" — "+sig.Project+": "+sig.Title)
+		}
+		if cfg, err := loadLLMConfig(ctx, tx); err == nil {
+			prompt := "Summarize for a delivery lead, max 2 sentences, no preamble, " +
+				"say what to act on first:\n" + strings.Join(lines, "\n")
+			if res, err := llmComplete(ctx, cfg, "cheap",
+				"You summarize project delivery risk signals for a professional services automation tool.",
+				prompt); err == nil {
+				narrative = res.Text
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO agent_runs (workspace_id, agent, status, model, input_ref, output_ref, cost_cents, finished_at)
+					VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'signals', 'succeeded', $1,
+					        'signals:narrate', left($2, 200), $3, now())`,
+					res.Model, narrative, llmCostCents(res)); err != nil {
+					problem(w, http.StatusInternalServerError, "internal error")
+					return
+				}
+			}
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO agent_runs (workspace_id, agent, status, model, input_ref, output_ref, finished_at)
 		VALUES (NULLIF(current_setting('app.workspace_id', true), '')::uuid, 'signals', 'succeeded', 'none',
@@ -171,7 +204,7 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"signals": out})
+	writeJSON(w, http.StatusOK, map[string]any{"signals": out, "narrative": narrative})
 }
 
 func countOut(n int) string {

@@ -1178,6 +1178,32 @@ INSERT INTO test_results
 SELECT 'T26c agents_enabled default true', COALESCE(agents_enabled, true) IS TRUE
 FROM workspace_settings WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
 
+-- ---------- T27: llm configs (00033) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO llm_configs (workspace_id, provider, base_url, cheap_model, smart_model)
+VALUES ('11111111-1111-1111-1111-111111111111', 'ollama', 'http://127.0.0.1:11434', 'llama3', 'llama3');
+INSERT INTO test_results
+SELECT 'T27a llm config roundtrip', EXISTS (
+  SELECT 1 FROM llm_configs WHERE provider = 'ollama' AND cheap_model = 'llama3');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T27b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM llm_configs WHERE provider = 'ollama');
+
+-- UNIQUE workspace: second config rejected
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO llm_configs (workspace_id, provider, base_url, cheap_model, smart_model)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'openai', 'https://api.openai.com', 'a', 'b');
+    RAISE EXCEPTION 'T27c expected unique violation';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+END $$;
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

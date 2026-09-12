@@ -31,6 +31,20 @@ export default function AgentsPage() {
   const [enabled, setEnabled] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [err, setErr] = useState("");
+  const [llm, setLlm] = useState<{
+    configured: boolean;
+    provider?: string;
+    base_url?: string;
+    cheap_model?: string;
+    smart_model?: string;
+  } | null>(null);
+  const [fProvider, setFProvider] = useState("openai");
+  const [fBase, setFBase] = useState("https://api.openai.com");
+  const [fCheap, setFCheap] = useState("");
+  const [fSmart, setFSmart] = useState("");
+  const [fKey, setFKey] = useState("");
+  const [llmMsg, setLlmMsg] = useState("");
+  const [llmBusy, setLlmBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -41,12 +55,52 @@ export default function AgentsPage() {
         setMe(m);
         setIsAdmin(m.role === "owner" || m.role === "admin");
         if (!["owner", "admin", "manager"].includes(m.role)) return router.push("/");
-        const [runsRes, stRes] = await Promise.all([api("/api/agents/runs"), api("/api/agents/status")]);
+        const [runsRes, stRes, llmRes] = await Promise.all([
+          api("/api/agents/runs"),
+          api("/api/agents/status"),
+          api("/api/agents/llm"),
+        ]);
         if (runsRes.ok) setRuns((await runsRes.json()).runs ?? []);
         if (stRes.ok) setEnabled((await stRes.json()).enabled ?? true);
+        if (llmRes.ok) {
+          const c = await llmRes.json();
+          setLlm(c);
+          if (c.configured) {
+            setFProvider(c.provider ?? "openai");
+            setFBase(c.base_url ?? "");
+            setFCheap(c.cheap_model ?? "");
+            setFSmart(c.smart_model ?? "");
+          }
+        }
       }
     })();
   }, [router]);
+
+  const saveLLM = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLlmBusy(true);
+    setLlmMsg("");
+    const res = await api("/api/agents/llm", {
+      method: "PUT",
+      body: JSON.stringify({
+        provider: fProvider,
+        base_url: fBase,
+        cheap_model: fCheap,
+        smart_model: fSmart,
+        api_key: fKey,
+      }),
+    });
+    setLlmBusy(false);
+    if (res.ok) {
+      setLlmMsg("Saved. Key sealed — narration is live.");
+      setFKey("");
+      const c = await (await api("/api/agents/llm")).json();
+      setLlm(c);
+    } else {
+      const p = await res.json().catch(() => null);
+      setLlmMsg(p?.title ?? "Save failed");
+    }
+  };
 
   const toggle = async () => {
     const next = !enabled;
@@ -103,6 +157,83 @@ export default function AgentsPage() {
             {err}
           </p>
         )}
+
+        <section aria-label="BYO-LLM provider" className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-text">BYO-LLM provider</p>
+              <p className="text-xs text-muted">
+                OpenAI / Anthropic / Ollama (§15). Model router — cheap for nudges, smart for drafts. Key sealed AES-256-GCM, never returned.
+              </p>
+            </div>
+            {llm && (
+              <span className={`rounded-full px-2 py-0.5 text-xs ${llm.configured ? "bg-success/10 text-success" : "bg-warn/10 text-warn"}`}>
+                {llm.configured ? `${llm.provider} — ${llm.cheap_model} / ${llm.smart_model}` : "not configured"}
+              </span>
+            )}
+          </div>
+          {isAdmin && (
+            <form onSubmit={saveLLM} className="mt-3 grid gap-2 sm:grid-cols-2">
+              <label className="text-xs text-muted">
+                Provider
+                <select
+                  value={fProvider}
+                  onChange={(e) => setFProvider(e.target.value)}
+                  className="mt-1 w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+                >
+                  <option value="openai">OpenAI / Azure (openai-compatible)</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="ollama">Ollama (self-hosted)</option>
+                </select>
+              </label>
+              <label className="text-xs text-muted">
+                Base URL
+                <input
+                  value={fBase}
+                  onChange={(e) => setFBase(e.target.value)}
+                  placeholder="https://api.openai.com"
+                  className="mt-1 w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                Cheap model (nudges, summaries)
+                <input
+                  value={fCheap}
+                  onChange={(e) => setFCheap(e.target.value)}
+                  placeholder="gpt-4o-mini"
+                  className="mt-1 w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                Smart model (docs, migration)
+                <input
+                  value={fSmart}
+                  onChange={(e) => setFSmart(e.target.value)}
+                  placeholder="gpt-4o"
+                  className="mt-1 w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                API key {llm?.configured ? "(leave blank to keep)" : ""}
+                <input
+                  type="password"
+                  value={fKey}
+                  onChange={(e) => setFKey(e.target.value)}
+                  placeholder={fProvider === "ollama" ? "not needed for ollama" : "sk-…"}
+                  className="mt-1 w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={llmBusy}
+                className="mt-1 self-end rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {llmBusy ? "Saving…" : "Save"}
+              </button>
+              {llmMsg && <p className="col-span-full text-xs text-muted">{llmMsg}</p>}
+            </form>
+          )}
+        </section>
 
         <div className="overflow-hidden rounded-xl border border-border">
           <table className="w-full text-sm">
