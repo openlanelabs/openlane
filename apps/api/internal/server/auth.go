@@ -143,6 +143,19 @@ func (s *Server) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		// SSO enforcement (§406): enforced domains must use SSO — magic
+		// link refused for them. Scoped query inside the tx (RLS).
+		var enforce bool
+		var domains []string
+		if err := tx.QueryRow(ctx, `
+			SELECT enforce, allowed_domains FROM sso_configs
+			WHERE workspace_id = NULLIF(current_setting('app.workspace_id', true), '')::uuid`).
+			Scan(&enforce, &domains); err == nil && enforce {
+			if len(domains) == 0 || domainAllowed(req.Email, domains) {
+				problem(w, http.StatusForbidden, "this workspace requires SSO login — use your identity provider")
+				return
+			}
+		}
 		var userID string
 		var role string
 		isMember := tx.QueryRow(ctx, `

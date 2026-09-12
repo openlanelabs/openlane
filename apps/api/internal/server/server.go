@@ -150,6 +150,11 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("GET /v1/projects/{id}/notes", authed(s.listProjectNotes))
 	mux.Handle("POST /v1/calendar/preview", authed(s.calendarPreview))
 	mux.Handle("POST /v1/calendar/import", authed(s.calendarImport))
+	mux.Handle("PUT /v1/sso", authed(s.putSSOConfig))
+	mux.Handle("GET /v1/sso", authed(s.getSSOConfig))
+	mux.HandleFunc("GET /v1/sso/authorize", s.ssoAuthorize)
+	mux.HandleFunc("GET /v1/sso/callback", s.ssoCallback)
+	mux.HandleFunc("GET /v1/sso/status", s.ssoStatus)
 
 	mux.HandleFunc("GET /v1/portal/{token}/session", s.portal(s.getPortalSession))
 	mux.HandleFunc("GET /v1/portal/{token}/tasks", s.portal(s.listPortalTasks))
