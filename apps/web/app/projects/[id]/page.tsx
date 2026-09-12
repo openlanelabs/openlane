@@ -92,6 +92,47 @@ export default function ProjectDetail() {
   const [sgBusy, setSgBusy] = useState(false);
   const [sgErr, setSgErr] = useState("");
   const [sgPicked, setSgPicked] = useState("");
+  // Doc Agent draft flow (#128)
+  const [daTitle, setDaTitle] = useState("");
+  const [daTemplate, setDaTemplate] = useState("# SOW\n\n## Scope\n\n## Timeline\n");
+  const [daSrcLabel, setDaSrcLabel] = useState("");
+  const [daSrcText, setDaSrcText] = useState("");
+  const [daSources, setDaSources] = useState<{ label: string; text: string }[]>([]);
+  const [daBusy, setDaBusy] = useState(false);
+  const [daErr, setDaErr] = useState("");
+  const [daResult, setDaResult] = useState<
+    { doc_id: string; uncited: { index: number; text: string }[]; model: string; cost_cents: number } | null
+  >(null);
+
+  const addDaSource = () => {
+    if (!daSrcLabel.trim() || !daSrcText.trim()) return;
+    setDaSources([...daSources, { label: daSrcLabel.trim(), text: daSrcText }]);
+    setDaSrcLabel("");
+    setDaSrcText("");
+  };
+
+  const runDraft = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDaBusy(true);
+    setDaErr("");
+    setDaResult(null);
+    const res = await api(`/api/agents/doc/draft`, {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: id,
+        title: daTitle,
+        template_md: daTemplate,
+        sources: daSources,
+      }),
+    });
+    setDaBusy(false);
+    if (res.ok) {
+      setDaResult(await res.json());
+    } else {
+      const p = await res.json().catch(() => null);
+      setDaErr(p?.title ?? "Draft failed");
+    }
+  };
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -526,6 +567,95 @@ export default function ProjectDetail() {
                   </li>
                 )}
               </ul>
+            )}
+          </section>
+        )}
+
+        {me && ["owner", "admin", "manager"].includes(me.role) && (
+          <section aria-label="Doc Agent" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Doc Agent</h2>
+            <p className="mt-1 text-xs text-muted">
+              Drafts a cited SOW/BRD from your sources (transcript paste, notes, emails) + a template. Every factual sentence must cite a source; uncited paragraphs are flagged below — you publish, it only drafts. Needs a BYO-LLM provider configured (Agents page).
+            </p>
+            <form onSubmit={runDraft} className="mt-3 space-y-2">
+              <input
+                value={daTitle}
+                onChange={(e) => setDaTitle(e.target.value)}
+                placeholder="Doc title (e.g. Acme Integration SOW)"
+                aria-label="Draft title"
+                className="w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <textarea
+                value={daTemplate}
+                onChange={(e) => setDaTemplate(e.target.value)}
+                aria-label="Template"
+                rows={4}
+                className="w-full rounded-[10px] border border-border bg-bg px-3 py-2 font-mono text-xs text-text"
+              />
+              <div className="space-y-2 rounded-[10px] border border-border bg-bg p-2">
+                {daSources.length === 0 && (
+                  <p className="text-xs text-muted">No sources yet — paste a transcript excerpt or notes below.</p>
+                )}
+                {daSources.map((s, i) => (
+                  <p key={i} className="text-xs text-text">
+                    <span className="font-medium">[{s.label}]</span> <span className="text-muted">{s.text.slice(0, 80)}…</span>
+                  </p>
+                ))}
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    value={daSrcLabel}
+                    onChange={(e) => setDaSrcLabel(e.target.value)}
+                    placeholder="Source label (call1, email-2…)"
+                    aria-label="Source label"
+                    className="w-44 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+                  />
+                  <textarea
+                    value={daSrcText}
+                    onChange={(e) => setDaSrcText(e.target.value)}
+                    placeholder="Source text (paste transcript / notes — PII is masked before the provider sees it)"
+                    aria-label="Source text"
+                    rows={3}
+                    className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+                  />
+                  <button
+                    type="button"
+                    onClick={addDaSource}
+                    className="self-stretch rounded-[10px] border border-border px-3 py-2 text-sm text-text hover:bg-surface"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+              <button
+                disabled={daBusy || !daTitle || daSources.length === 0}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {daBusy ? "Drafting…" : "Draft with citations"}
+              </button>
+            </form>
+            {daErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {daErr}
+              </p>
+            )}
+            {daResult && (
+              <div className="mt-3 space-y-2" role="status">
+                <p className="text-sm text-success">
+                  Draft saved (v1) · {daResult.model} · {daResult.cost_cents}¢ — review it in Docs below before publishing.
+                </p>
+                {daResult.uncited.length > 0 && (
+                  <div className="rounded-[10px] border border-warn/40 bg-warn/10 p-3">
+                    <p className="text-xs font-semibold text-warn">
+                      ⚠ {daResult.uncited.length} uncited paragraph{daResult.uncited.length === 1 ? "" : "s"} — check for hallucinations:
+                    </p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-text">
+                      {daResult.uncited.map((u) => (
+                        <li key={u.index}>{u.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
           </section>
         )}
