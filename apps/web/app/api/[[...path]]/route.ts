@@ -10,6 +10,7 @@ const API = process.env.OPENLANE_API_URL ?? "http://localhost:8080";
 async function proxy(req: NextRequest, path: string[], method: string) {
   const auth = req.headers.get("authorization");
   if (!auth) return NextResponse.json({ title: "unauthorized" }, { status: 401 });
+  const ws = req.headers.get("x-workspace-id");
   const sub = path.map(encodeURIComponent).join("/");
   const url = new URL(req.url);
   const init: RequestInit = {
@@ -17,6 +18,7 @@ async function proxy(req: NextRequest, path: string[], method: string) {
     cache: "no-store",
     headers: {
       authorization: auth,
+      ...(ws ? { "x-workspace-id": ws } : {}),
       ...(req.headers.get("content-type") ? { "content-type": req.headers.get("content-type")! } : {}),
     },
   };

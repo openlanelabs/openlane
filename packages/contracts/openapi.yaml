@@ -3395,6 +3395,87 @@ paths:
                     format: uuid
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /agents/runs:
+    get:
+      summary: List agent runs (audit surface)
+      description: >
+        P2 §15 billing transparency — every agent run (guardian scans, MCP
+        tool calls) with model + cost. Manager role and above.
+      operationId: listAgentRuns
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Newest-first run list (cap 100)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: {$ref: "#/components/schemas/AgentRun"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+  /agents/status:
+    get:
+      summary: Agents kill-switch status + roster
+      operationId: getAgentsStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Enabled flag + agent roster
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: {type: boolean}
+                  agents:
+                    type: array
+                    items: {type: string}
+        "403": {$ref: "#/components/responses/Forbidden"}
+    put:
+      summary: Toggle the agents kill switch (admin)
+      description: Per-workspace §15 kill switch. Audited as agents.kill_switch.
+      operationId: putAgentsStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        "200":
+          description: New state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: {type: boolean}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
   /settings/slack:
     put:
       summary: Configure the workspace Slack webhook
@@ -4125,6 +4206,24 @@ components:
                 type: integer
               reason:
                 type: string
+    AgentRun:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        agent:
+          type: string
+          enum: [doc, migration, workforce, resourcing, guardian, analyst, assistant, signals, mcp]
+        status:
+          type: string
+          enum: [running, succeeded, failed, needs_approval, cancelled]
+        model: {type: string}
+        cost_cents: {type: integer}
+        input_ref: {type: string}
+        output_ref: {type: string}
+        error: {type: string}
+        approved_by: {type: [string, "null"], format: uuid}
+        started_at: {type: string}
+        finished_at: {type: [string, "null"]}
     Problem:
       type: object
       required: [type, title, status]

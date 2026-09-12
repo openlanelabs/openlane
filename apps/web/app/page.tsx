@@ -144,6 +144,11 @@ export default function Dashboard() {
             <a href="/capacity" className="text-xs text-muted hover:text-text">
               Capacity
             </a>
+            {isManager && (
+              <a href="/agents" className="text-xs text-muted hover:text-text">
+                Agents
+              </a>
+            )}
             <button
               onClick={async () => { await logout(); router.push("/login"); }}
               className="text-xs text-muted hover:text-text"
