@@ -17,6 +17,11 @@ import (
 // TestLLMRouter: config CRUD + provider drivers via httptest stubs +
 // narration degrade + cost metering.
 func TestLLMRouter(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i)
+	}
+	t.Setenv("OPENLANE_INTEGRATION_KEY", base64.StdEncoding.EncodeToString(key))
 	_, _, h := filesTestStack(t)
 	ctx := context.Background()
 	adminPool, err := pgxpool.New(ctx, adminDSN(t))
