@@ -3395,6 +3395,68 @@ paths:
                     format: uuid
         "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /agents/resourcing/suggest:
+    post:
+      summary: Resourcing Agent — suggest a team (P2 §15.4)
+      description: >
+        Deterministic, explainable candidate ranking: skill fit, role
+        match, allocation headroom over the window, and the §15.4
+        anti-bias load-balance penalty. Every candidate carries a reason
+        string. Over-capacity people are excluded. Read-only — no
+        allocations are written. Manager role and above; honors the
+        workspace agents kill switch.
+      operationId: suggestTeam
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, hours_week, starts_on, ends_on]
+              properties:
+                project_id: {type: string, format: uuid}
+                role: {type: string}
+                hours_week: {type: number, minimum: 1, maximum: 80}
+                starts_on: {type: string, format: date}
+                ends_on: {type: string, format: date}
+                skills: {type: array, items: {type: string}, maxItems: 20}
+      responses:
+        "200":
+          description: Ranked candidates with reasons (top 10)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        person_id: {type: string, format: uuid}
+                        name: {type: string}
+                        role: {type: string}
+                        skills: {type: array, items: {type: string}}
+                        capacity_hrs: {type: number}
+                        allocated_hrs_window: {type: number}
+                        headroom_hrs: {type: number}
+                        score: {type: number}
+                        reason: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503":
+          description: Agents disabled for this workspace (kill switch)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /agents/runs:
     get:
       summary: List agent runs (audit surface)
