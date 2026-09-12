@@ -1131,6 +1131,34 @@ INSERT INTO test_results
 SELECT 'T24b calendar uid unique', count(*) = 1 FROM time_entries
 WHERE refs->>'calendar_uid' = 't24-abc';
 
+-- ---------- T25: sso configs (00030) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO sso_configs (workspace_id, issuer, client_id, client_secret_enc)
+VALUES ('11111111-1111-1111-1111-111111111111', 'https://idp.acme.test', 'cid', '\x00');
+INSERT INTO test_results
+SELECT 'T25a config roundtrip', EXISTS (
+  SELECT 1 FROM sso_configs WHERE issuer = 'https://idp.acme.test');
+
+-- UNIQUE workspace: second config rejected
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO sso_configs (workspace_id, issuer, client_id, client_secret_enc)
+    VALUES ('11111111-1111-1111-1111-111111111111', 'https://other.test', 'c2', '\x00');
+    RAISE EXCEPTION 'T25b expected unique violation';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T25b one config per workspace', count(*) = 1 FROM sso_configs
+WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T25c cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM sso_configs WHERE issuer = 'https://idp.acme.test');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

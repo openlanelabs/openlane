@@ -2662,6 +2662,125 @@ paths:
                   queued: {type: boolean}
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /sso:
+    put:
+      summary: Configure OIDC SSO (admin)
+      operationId: putSSOConfig
+      description: |
+        Admin-only (§127). Issuer discovery URL, PKCE client
+        credentials (secret sealed AES-256-GCM), allowed email domains
+        for JIT, and enforce (§406): enforced domains must use SSO —
+        magic-link refused for them.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuer, client_id, client_secret]
+              properties:
+                issuer:
+                  type: string
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                allowed_domains:
+                  type: array
+                  items:
+                    type: string
+                enforce:
+                  type: boolean
+      responses:
+        "200": { description: Saved }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      summary: SSO configuration (masked)
+      operationId: getSSOConfig
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Config (never echoes the secret)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: {type: boolean}
+                  issuer: {type: string}
+                  allowed_domains: {type: array, items: {type: string}}
+                  enforce: {type: boolean}
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /sso/authorize:
+    get:
+      summary: Start the OIDC flow (unauthenticated)
+      operationId: ssoAuthorize
+      description: 302 to the IdP's authorize endpoint with PKCE S256 and an HMAC-signed state cookie.
+      parameters:
+        - name: ws
+          in: query
+          required: true
+          description: Workspace slug
+          schema:
+            type: string
+      responses:
+        "302": { description: Redirect to IdP }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /sso/callback:
+    get:
+      summary: OIDC callback (unauthenticated)
+      operationId: ssoCallback
+      description: |
+        Verifies state (HMAC + expiry), exchanges the code with the
+        stored verifier, validates the ID token (RS256 via JWKS,
+        issuer/audience/expiry/nonce per §424), JIT-provisions unknown
+        users with the viewer role (§424), links by subject or email,
+        and hands session cookies to /sso/finish.
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302": { description: Redirect to /sso/finish with session cookies }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /sso/status:
+    get:
+      summary: SSO status for the login page (unauthenticated)
+      operationId: ssoStatus
+      description: Whether the workspace has SSO + enforcement flags. No secrets, no oracle.
+      parameters:
+        - name: ws
+          in: query
+          required: true
+          description: Workspace slug
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  configured: {type: boolean}
+                  enforce: {type: boolean}
+                  allowed_domains: {type: array, items: {type: string}}
   /projects/{id}/approvals:
     post:
       summary: Request an approval from the customer
@@ -3494,6 +3613,12 @@ components:
             $ref: "#/components/schemas/Problem"
     Unauthorized:
       description: Missing, invalid, expired, or revoked credentials
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Authenticated but not allowed (role or policy)
       content:
         application/problem+json:
           schema:
