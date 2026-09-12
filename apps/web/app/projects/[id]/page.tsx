@@ -79,6 +79,19 @@ export default function ProjectDetail() {
   const [docBody, setDocBody] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  // Resourcing Agent suggest flow (#121 → this issue)
+  const [me, setMe] = useState<{ role: string } | null>(null);
+  const [sgRole, setSgRole] = useState("");
+  const [sgHours, setSgHours] = useState("20");
+  const [sgStart, setSgStart] = useState("");
+  const [sgEnd, setSgEnd] = useState("");
+  const [sgSkills, setSgSkills] = useState("");
+  const [candidates, setCandidates] = useState<
+    { person_id: string; name: string; reason: string; score: number; role: string }[] | null
+  >(null);
+  const [sgBusy, setSgBusy] = useState(false);
+  const [sgErr, setSgErr] = useState("");
+  const [sgPicked, setSgPicked] = useState("");
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -122,6 +135,57 @@ export default function ProjectDetail() {
   }, [id, router]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/auth/me");
+      if (res.ok) setMe(await res.json());
+    })();
+  }, []);
+
+  async function runSuggest(e: React.FormEvent) {
+    e.preventDefault();
+    if (!sgStart || !sgEnd || sgBusy) return;
+    setSgBusy(true); setSgErr(""); setCandidates(null);
+    const res = await api(`/agents/resourcing/suggest`, {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: id,
+        role: sgRole.trim(),
+        hours_week: Number(sgHours) || 20,
+        starts_on: sgStart,
+        ends_on: sgEnd,
+        skills: sgSkills.split(",").map((s) => s.trim()).filter(Boolean),
+      }),
+    });
+    setSgBusy(false);
+    if (!res.ok) {
+      setSgErr(res.status === 503 ? "Agents are disabled for this workspace." : "Suggest failed.");
+      return;
+    }
+    setCandidates((await res.json()).candidates ?? []);
+  }
+
+  async function pickCandidate(personId: string, role: string) {
+    setSgErr("");
+    const res = await api(`/people/${personId}/allocations`, {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: id,
+        role: role || sgRole.trim() || "Consultant",
+        hours_week: sgHours,
+        starts_on: sgStart,
+        ends_on: sgEnd,
+        kind: "hard",
+      }),
+    });
+    if (!res.ok) {
+      setSgErr("Could not allocate — check dates and hours.");
+      return;
+    }
+    setSgPicked("Allocated.");
+    setCandidates(null);
+  }
 
   async function addTask(e: React.FormEvent) {
     e.preventDefault();
@@ -377,6 +441,94 @@ export default function ProjectDetail() {
             ))}
           </ul>
         </section>
+
+        {me && ["owner", "admin", "manager"].includes(me.role) && (
+          <section aria-label="Resourcing Agent" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Resourcing Agent</h2>
+            <p className="mt-1 text-xs text-muted">
+              Suggests people from skills, availability, and load — with reasons. You allocate; the agent only suggests.
+            </p>
+            <form onSubmit={runSuggest} className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                value={sgRole}
+                onChange={(e) => setSgRole(e.target.value)}
+                placeholder="Role (e.g. Architect)"
+                aria-label="Role"
+                className="w-40 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <input
+                value={sgHours}
+                onChange={(e) => setSgHours(e.target.value)}
+                placeholder="20"
+                aria-label="Hours per week"
+                inputMode="numeric"
+                className="w-20 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <input
+                type="date"
+                value={sgStart}
+                onChange={(e) => setSgStart(e.target.value)}
+                aria-label="Start date"
+                className="rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+              />
+              <input
+                type="date"
+                value={sgEnd}
+                onChange={(e) => setSgEnd(e.target.value)}
+                aria-label="End date"
+                className="rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+              />
+              <input
+                value={sgSkills}
+                onChange={(e) => setSgSkills(e.target.value)}
+                placeholder="Skills, comma-separated (go, sql…)"
+                aria-label="Required skills"
+                className="w-56 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <button
+                disabled={sgBusy || !sgStart || !sgEnd}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {sgBusy ? "Suggesting…" : "Suggest"}
+              </button>
+            </form>
+            {sgErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {sgErr}
+              </p>
+            )}
+            {sgPicked && (
+              <p className="mt-2 text-sm text-success" role="status">
+                {sgPicked}
+              </p>
+            )}
+            {candidates && (
+              <ul className="mt-3 space-y-2">
+                {candidates.map((c) => (
+                  <li key={c.person_id} className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-bg px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-text">
+                        {c.name} <span className="text-xs text-muted">· {c.role}</span>
+                      </p>
+                      <p className="text-xs text-muted">{c.reason}</p>
+                    </div>
+                    <button
+                      onClick={() => pickCandidate(c.person_id, c.role)}
+                      className="shrink-0 rounded-[10px] bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600"
+                    >
+                      Allocate
+                    </button>
+                  </li>
+                ))}
+                {candidates.length === 0 && (
+                  <li className="px-3 py-4 text-sm text-muted">
+                    No candidates — try fewer required skills or a wider window.
+                  </li>
+                )}
+              </ul>
+            )}
+          </section>
+        )}
 
         <section aria-label="Documents" className="rounded-[10px] border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text">Docs</h2>
