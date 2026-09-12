@@ -251,7 +251,9 @@ func llmCostCents(r *llmResult) int {
 		inPer, outPer = 0, 0
 	}
 	if v := os.Getenv(key); v != "" {
-		if n, err := fmt.Sscanf(v, "%d,%d", &inPer, &outPer); err == nil && n == 2 {
+		var in, out int
+		if n, err := fmt.Sscanf(v, "%d,%d", &in, &out); err == nil && n == 2 {
+			inPer, outPer = in, out
 		}
 	}
 	cents := (r.InTokens*inPer + r.OutTokens*outPer) / 1_000_000
