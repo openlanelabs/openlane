@@ -123,7 +123,7 @@ func (s *Server) migrationSuggest(w http.ResponseWriter, r *http.Request) {
 		if i >= 5 {
 			break
 		}
-		sb.WriteString(fmt.Sprintf("%v\n", rec))
+		fmt.Fprintf(&sb, "%v\n", rec)
 	}
 	res, err := llmComplete(ctx, cfg, "smart", sys, sb.String())
 	if err != nil {
@@ -612,9 +612,7 @@ func buildPreview(headers []string, records [][]string, columns map[string]strin
 		sortedDest = append(sortedDest, d)
 	}
 	sort.Strings(sortedDest)
-	for _, d := range sortedDest {
-		preview.Headers = append(preview.Headers, d)
-	}
+	preview.Headers = append(preview.Headers, sortedDest...)
 	for i, rec := range records {
 		if i >= n {
 			break
