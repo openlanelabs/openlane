@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { setSession } from "@/lib/auth";
 
@@ -8,6 +8,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [slug, setSlug] = useState("");
+  const [ssoOn, setSsoOn] = useState(false);
   const [phase, setPhase] = useState<"form" | "sent" | "error">("form");
   const [devLink, setDevLink] = useState<string | null>(null);
   const [err, setErr] = useState("");
@@ -43,6 +44,22 @@ export default function LoginPage() {
     }
     setPhase("sent");
   }
+
+  useEffect(() => {
+    if (!slug) {
+      setSsoOn(false);
+      return;
+    }
+    (async () => {
+      try {
+        const res = await fetch(`/v1/sso/status?ws=${encodeURIComponent(slug)}`);
+        const d = res.ok ? await res.json() : {};
+        setSsoOn(!!d.configured);
+      } catch {
+        setSsoOn(false);
+      }
+    })();
+  }, [slug]);
 
   return (
     <main className="min-h-screen bg-bg flex items-center justify-center p-6">
@@ -90,6 +107,16 @@ export default function LoginPage() {
               Email me a link
             </button>
           </form>
+        )}
+        {ssoOn && (
+          <div className="mt-4 border-t border-border pt-4">
+            <a
+              href={`/v1/sso/authorize?ws=${encodeURIComponent(slug)}`}
+              className="block w-full rounded-[10px] border border-border bg-bg px-4 py-2 text-center text-sm font-medium text-text hover:bg-surface"
+            >
+              Sign in with SSO
+            </a>
+          </div>
         )}
       </div>
     </main>
