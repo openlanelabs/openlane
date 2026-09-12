@@ -3457,6 +3457,208 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /agents/migrations/suggest:
+    post:
+      summary: Migration Agent — suggest a CSV mapping (P2 §15.2)
+      description: >
+        Smart-model class (BYO-LLM required — 400 when unconfigured).
+        Parses the CSV, asks the provider for a column→field mapping +
+        transforms + a plain-English explanation, then VALIDATES the
+        LLM's answer against the real destination schema (hallucinated
+        fields dropped in favor of deterministic best-guess) and
+        returns a 10-row preview with per-row validation errors. The
+        run is saved as status=draft awaiting human approval. Metered
+        to agent_runs (agent=migration).
+      operationId: migrationSuggest
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, dest, csv_text]
+              properties:
+                name: {type: string}
+                dest:
+                  type: string
+                  enum: [salesforce_accounts, hubspot_contacts, generic]
+                csv_text:
+                  type: string
+                  description: UTF-8 CSV with a header row; ≤2000 data rows (streaming later)
+      responses:
+        "200":
+          description: Draft migration with validated mapping + preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  name: {type: string}
+                  dest: {type: string}
+                  status: {type: string, example: draft}
+                  columns:
+                    type: object
+                    additionalProperties: {type: string}
+                  transforms:
+                    type: array
+                    items: {type: string}
+                  plain_english: {type: string}
+                  preview:
+                    type: object
+                    properties:
+                      headers:
+                        type: array
+                        items: {type: string}
+                      rows:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            row:
+                              type: object
+                              additionalProperties: {type: string}
+                            errors:
+                              type: array
+                              items: {type: string}
+                  model: {type: string}
+                  cost_cents: {type: integer}
+        "400": {description: "validation failed, or no llm configured"}
+        "403": {description: Manager role required}
+        "502": {description: LLM provider failed}
+        "503": {description: Agents disabled (kill switch)}
+  /agents/migrations:
+    get:
+      summary: List migration runs (draft → done)
+      operationId: listMigrations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Runs, newest first (≤50)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: string, format: uuid}
+                    name: {type: string}
+                    dest: {type: string}
+                    status: {type: string}
+                    stats:
+                      type: [object, "null"]
+                    created_at: {type: string, format: date-time}
+        "403": {description: Manager role required}
+  /agents/migrations/{id}:
+    get:
+      summary: Get a migration run (mapping, preview, result, quarantine)
+      operationId: getMigration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Full run detail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  name: {type: string}
+                  dest: {type: string}
+                  status: {type: string}
+                  mapping: {type: [object, "null"]}
+                  plain_english: {type: [string, "null"]}
+                  preview: {type: [object, "null"]}
+                  result:
+                    type: [array, "null"]
+                    items: {type: object}
+                  quarantine:
+                    type: [array, "null"]
+                    items: {type: object}
+                  stats: {type: [object, "null"]}
+        "403": {description: Manager role required}
+        "404": {description: Not found}
+    delete:
+      summary: Delete a migration run (rollback = discard the dataset)
+      operationId: deleteMigration
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Deleted}
+        "403": {description: Manager role required}
+        "404": {description: Not found}
+  /agents/migrations/{id}/approve:
+    post:
+      summary: Approve + run the full migration (deterministic, no LLM)
+      description: >
+        Manager approves the draft; code (not the LLM) transforms all
+        rows. Bad rows are quarantined with reasons — good rows
+        continue (§15.2 partial-fail edge). Stats + the transformed
+        dataset are written; the approval is audited (source=agent).
+        Only drafts can be approved (state machine).
+      operationId: migrationApprove
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Migration done
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  status: {type: string, example: done}
+                  stats:
+                    type: object
+                    properties:
+                      total: {type: integer}
+                      ok: {type: integer}
+                      quarantined: {type: integer}
+        "403": {description: Manager role required}
+        "404": {description: Not found or not in draft}
   /agents/doc/draft:
     post:
       summary: Doc Agent — draft a cited SOW/BRD from sources + template (P2 §15.1)

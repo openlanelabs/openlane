@@ -24,6 +24,23 @@ const statusColor = (s: string) => {
   return "bg-danger/10 text-danger";
 };
 
+// Migration Agent (§15.2) types + helpers
+type MigrRow = { row: Record<string, string>; errors?: string[] };
+type Migr = {
+  id: string;
+  name: string;
+  dest: string;
+  status: string;
+  stats: { total?: number; ok?: number; quarantined?: number } | null;
+};
+type MigrDetail = Migr & {
+  mapping: { columns?: Record<string, string>; transforms?: string[] } | null;
+  plain_english: string | null;
+  preview: { headers?: string[]; rows?: MigrRow[] } | null;
+  quarantine: { line: number; reasons: string[] }[] | null;
+  result: Record<string, string>[] | null;
+};
+
 export default function AgentsPage() {
   const router = useRouter();
   const [me, setMe] = useState<{ display_name: string; role: string } | null>(null);
@@ -31,6 +48,60 @@ export default function AgentsPage() {
   const [enabled, setEnabled] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [err, setErr] = useState("");
+  // Migration Agent state (§15.2)
+  const [migrName, setMigrName] = useState("");
+  const [migrDest, setMigrDest] = useState("salesforce_accounts");
+  const [migrCSV, setMigrCSV] = useState("");
+  const [migrBusy, setMigrBusy] = useState(false);
+  const [migrSuggest, setMigrSuggest] = useState<
+    { name: string; columns: Record<string, string>; transforms: string[]; plain_english: string; preview: { headers?: string[]; rows?: MigrRow[] } | null; model: string; cost_cents: number; id: string } | null
+  >(null);
+  const [migrDetail, setMigrDetail] = useState<MigrDetail | null>(null);
+  const [migrList, setMigrList] = useState<Migr[] | null>(null);
+  const [migrErr, setMigrErr] = useState("");
+  const [migrPicked, setMigrPicked] = useState("");
+
+  const loadMigrList = async () => {
+    const res = await api("/api/agents/migrations");
+    if (res.ok) setMigrList(await res.json());
+  };
+
+  const runSuggest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMigrBusy(true);
+    setMigrErr("");
+    setMigrSuggest(null);
+    setMigrDetail(null);
+    const res = await api("/api/agents/migrations/suggest", {
+      method: "POST",
+      body: JSON.stringify({ name: migrName, dest: migrDest, csv_text: migrCSV }),
+    });
+    setMigrBusy(false);
+    if (res.ok) {
+      setMigrSuggest(await res.json());
+      loadMigrList();
+    } else {
+      const p = await res.json().catch(() => null);
+      setMigrErr(p?.title ?? "Suggest failed");
+    }
+  };
+
+  const approveMigr = async () => {
+    if (!migrSuggest) return;
+    setMigrBusy(true);
+    const res = await api(`/api/agents/migrations/${migrSuggest.id}/approve`, { method: "POST" });
+    setMigrBusy(false);
+    if (res.ok) {
+      const out = await res.json();
+      setMigrPicked(
+        `done — ${out.stats.ok} imported, ${out.stats.quarantined} quarantined of ${out.stats.total}`
+      );
+      loadMigrList();
+    } else {
+      const p = await res.json().catch(() => null);
+      setMigrErr(p?.title ?? "Approve failed");
+    }
+  };
   const [llm, setLlm] = useState<{
     configured: boolean;
     provider?: string;
@@ -72,6 +143,7 @@ export default function AgentsPage() {
             setFSmart(c.smart_model ?? "");
           }
         }
+        loadMigrList();
       }
     })();
   }, [router]);
@@ -272,6 +344,116 @@ export default function AgentsPage() {
             </tbody>
           </table>
         </div>
+
+        <section aria-label="Migration Agent" className="rounded-xl border border-border bg-surface p-4">
+          <div>
+            <p className="text-sm font-medium text-text">Migration Agent</p>
+            <p className="text-xs text-muted">
+              CSV in → the agent suggests a column mapping + transforms in plain English (§15.2) → you review the preview + errors → Approve runs the full migration deterministically, quarantining bad rows. The LLM never touches your data — it only picks the mapping.
+            </p>
+          </div>
+          <form onSubmit={runSuggest} className="mt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={migrName}
+                onChange={(e) => setMigrName(e.target.value)}
+                placeholder="Migration name (e.g. legacy accounts)"
+                aria-label="Migration name"
+                className="w-56 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <select
+                value={migrDest}
+                onChange={(e) => setMigrDest(e.target.value)}
+                aria-label="Destination"
+                className="rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+              >
+                <option value="salesforce_accounts">Salesforce Accounts</option>
+                <option value="hubspot_contacts">HubSpot Contacts</option>
+                <option value="generic">Generic</option>
+              </select>
+            </div>
+            <textarea
+              value={migrCSV}
+              onChange={(e) => setMigrCSV(e.target.value)}
+              placeholder={"Paste CSV (header row + up to 2000 rows)…\ncompany,phone,signup_date\nAcme,+1 415 555 0100,03/15/2026"}
+              aria-label="CSV data"
+              rows={5}
+              className="w-full rounded-[10px] border border-border bg-bg px-3 py-2 font-mono text-xs text-text placeholder:text-muted"
+            />
+            <button
+              disabled={migrBusy || !migrName || !migrCSV}
+              className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+            >
+              {migrBusy ? "Suggesting…" : "Suggest mapping"}
+            </button>
+          </form>
+          {migrErr && (
+            <p className="mt-2 text-sm text-danger" role="alert">
+              {migrErr}
+            </p>
+          )}
+          {migrSuggest && (
+            <div className="mt-3 space-y-3 rounded-[10px] border border-border bg-bg p-3" role="status">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-text">
+                  {migrSuggest.name} · <span className="text-xs text-muted">{migrSuggest.model} · {migrSuggest.cost_cents}¢</span>
+                </p>
+                <button
+                  onClick={approveMigr}
+                  disabled={migrBusy}
+                  className="rounded-[10px] bg-primary px-4 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+                >
+                  Approve + run full migration
+                </button>
+              </div>
+              {migrSuggest.plain_english && (
+                <p className="text-sm text-text">{migrSuggest.plain_english}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(migrSuggest.columns).map(([csvCol, field]) => (
+                  <span key={csvCol} className="rounded-full bg-surface px-2 py-0.5 text-xs text-text">
+                    {csvCol} → <span className="font-medium">{field}</span>
+                  </span>
+                ))}
+                {migrSuggest.transforms.length > 0 && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                    transforms: {migrSuggest.transforms.join(", ")}
+                  </span>
+                )}
+              </div>
+              {migrSuggest.preview?.rows && migrSuggest.preview.rows.some((r) => (r.errors?.length ?? 0) > 0) && (
+                <div className="rounded-[10px] border border-warn/40 bg-warn/10 p-2">
+                  <p className="text-xs font-semibold text-warn">Rows with validation errors (will be quarantined on run):</p>
+                  <ul className="mt-1 list-disc pl-4 text-xs text-text">
+                    {migrSuggest.preview.rows
+                      .filter((r) => (r.errors?.length ?? 0) > 0)
+                      .map((r, i) => (
+                        <li key={i}>{r.errors?.join("; ")}</li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+              {migrPicked && (
+                <p className="text-sm text-success">{migrPicked}</p>
+              )}
+            </div>
+          )}
+          {migrList && migrList.length > 0 && (
+            <ul className="mt-3 space-y-1">
+              {migrList.map((m) => (
+                <li key={m.id} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-text">{m.name}</span>
+                  <span className="text-xs text-muted">
+                    {m.status}
+                    {m.stats && m.status === "done" && m.stats && m.stats.ok != null && (
+                      ` · ${m.stats.ok} ok, ${m.stats.quarantined} quarantined`
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
     </main>
   );
