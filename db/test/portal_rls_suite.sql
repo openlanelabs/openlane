@@ -1204,6 +1204,24 @@ BEGIN
   END;
 END $$;
 
+-- ---------- T28: migration runs (00034) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO migration_runs (workspace_id, name, dest, csv_text)
+VALUES ('11111111-1111-1111-1111-111111111111', 'legacy accounts', 'salesforce_accounts', 'Name,Phone\nAcme,4155550100');
+INSERT INTO test_results
+SELECT 'T28a migration run roundtrip', EXISTS (
+  SELECT 1 FROM migration_runs WHERE name = 'legacy accounts');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T28b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM migration_runs WHERE name = 'legacy accounts');
+
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T28c draft default status', status = 'draft'
+FROM migration_runs WHERE name = 'legacy accounts';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
