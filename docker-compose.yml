@@ -93,6 +93,20 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Open Nitro MCP server (stdio). Run per-workspace:
+  #   docker compose run -e OPENLANE_MCP_WORKSPACE=<uuid> mcp
+  # and pipe JSON-RPC over stdin/stdout to your MCP client.
+  mcp:
+    build:
+      context: .
+      dockerfile: infra/docker/mcp.Dockerfile
+    environment:
+      DATABASE_URL: postgres://openlane_app:openlane_app@postgres:5432/openlane?sslmode=disable
+    profiles: ["nitro"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   web:
     build:
       context: .
