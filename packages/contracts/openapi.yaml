@@ -3457,6 +3457,81 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /agents/doc/draft:
+    post:
+      summary: Doc Agent — draft a cited SOW/BRD from sources + template (P2 §15.1)
+      description: >
+        Smart-model class (BYO-LLM required — 400 when unconfigured).
+        The citation contract is enforced twice: the prompt demands
+        [source <label>] on every factual sentence, and the response
+        lists uncited paragraphs (the §15.1 'uncited badge') so a
+        human catches hallucinations. Sources are PII-masked before
+        they reach the provider. The draft saves as a versioned doc
+        (customer_visible=false — humans publish), and the run is
+        metered to agent_runs with model + cost.
+      operationId: draftDoc
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, title, template_md, sources]
+              properties:
+                project_id: {type: string, format: uuid}
+                title: {type: string}
+                template_md:
+                  type: string
+                  description: markdown skeleton the draft follows
+                sources:
+                  type: array
+                  maxItems: 10
+                  items:
+                    type: object
+                    required: [label, text]
+                    properties:
+                      label: {type: string}
+                      text: {type: string, maxLength: 8192}
+      responses:
+        "200":
+          description: Draft saved (version 1) with uncited audit
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doc_id: {type: string, format: uuid}
+                  version: {type: integer}
+                  uncited:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: {type: integer}
+                        text: {type: string}
+                  model: {type: string}
+                  cost_cents: {type: integer}
+        "400":
+          description: "validation failed, or no llm configured (see Problem body)"
+        "403":
+          description: Manager role required
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404": {description: Project not found}
+        "502": {description: LLM provider failed}
+        "503":
+          description: Agents disabled for this workspace (kill switch)
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /agents/llm:
     put:
       summary: Configure the BYO-LLM provider for this workspace (P2 §15)
