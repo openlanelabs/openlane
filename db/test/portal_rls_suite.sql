@@ -1159,6 +1159,25 @@ INSERT INTO test_results
 SELECT 'T25c cross-ws read blocked', NOT EXISTS (
   SELECT 1 FROM sso_configs WHERE issuer = 'https://idp.acme.test');
 
+-- ---------- T26: agent runs (00031) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO agent_runs (workspace_id, agent, status, model)
+VALUES ('11111111-1111-1111-1111-111111111111', 'mcp', 'succeeded', 'none');
+INSERT INTO test_results
+SELECT 'T26a agent run roundtrip', EXISTS (
+  SELECT 1 FROM agent_runs WHERE agent = 'mcp' AND status = 'succeeded');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T26b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM agent_runs WHERE agent = 'mcp');
+
+-- kill switch column exists + defaults on
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T26c agents_enabled default true', COALESCE(agents_enabled, true) IS TRUE
+FROM workspace_settings WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
