@@ -26,3 +26,6 @@ tmp/
 
 # stray compiled binaries (worker builds via `go build ./...` in cwd)
 apps/worker/worker
+apps/web/AGENTS.md
+apps/web/CLAUDE.md
+apps/web/next-env.d.ts
