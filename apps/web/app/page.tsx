@@ -140,12 +140,17 @@ export default function Dashboard() {
             <p className="text-sm font-semibold text-text">{me.workspace_name}</p>
             <p className="text-xs text-muted">{me.display_name}</p>
           </div>
-          <button
-            onClick={async () => { await logout(); router.push("/login"); }}
-            className="text-xs text-muted hover:text-text"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-4">
+            <a href="/capacity" className="text-xs text-muted hover:text-text">
+              Capacity
+            </a>
+            <button
+              onClick={async () => { await logout(); router.push("/login"); }}
+              className="text-xs text-muted hover:text-text"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
