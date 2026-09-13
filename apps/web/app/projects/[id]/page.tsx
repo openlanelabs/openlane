@@ -131,6 +131,87 @@ export default function ProjectDetail() {
     }
   };
 
+  // Notes feed + time submit + calendar preview state
+  const [notes, setNotes] = useState<{ id: string; author: string; body: string; created_at: string }[] | null>(null);
+  const [noteBody, setNoteBody] = useState("");
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteErr, setNoteErr] = useState("");
+  const [timeMinutes, setTimeMinutes] = useState("");
+  const [timeTaskID, setTimeTaskID] = useState("");
+  const [timeNote, setTimeNote] = useState("");
+  const [timeBusy, setTimeBusy] = useState(false);
+  const [timeMsg, setTimeMsg] = useState("");
+  const [timeErr, setTimeErr] = useState("");
+  const [icsText, setIcsText] = useState("");
+  const [icsPreview, setIcsPreview] = useState<{ uid: string; summary: string; started_at: string; ended_at: string; minutes: number }[] | null>(null);
+  const [icsBusy, setIcsBusy] = useState(false);
+  const [icsErr, setIcsErr] = useState("");
+
+  const addNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNoteBusy(true);
+    setNoteErr("");
+    const res = await api(`/projects/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body: noteBody }),
+    });
+    setNoteBusy(false);
+    if (res.ok) {
+      setNoteBody("");
+      const nl = await api(`/projects/${id}/notes`);
+      if (nl.ok) setNotes(await nl.json());
+    } else {
+      const p = await res.json().catch(() => null);
+      setNoteErr(p?.title ?? "Note failed");
+    }
+  };
+
+  const submitTime = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTimeBusy(true);
+    setTimeMsg("");
+    setTimeErr("");
+    const mins = Number(timeMinutes);
+    const end = new Date();
+    const start = new Date(end.getTime() - mins * 60000);
+    const body = {
+      started_at: start.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      ended_at: end.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      note: timeNote,
+    };
+    const res = timeTaskID
+      ? await api(`/tasks/${timeTaskID}/time`, { method: "POST", body: JSON.stringify(body) })
+      : await api(`/projects/${id}/time`, { method: "POST", body: JSON.stringify(body) });
+    setTimeBusy(false);
+    if (res.ok) {
+      setTimeMinutes("");
+      setTimeNote("");
+      setTimeMsg(`Logged ${mins}m — it'll show in the approvals queue.`);
+    } else {
+      const p = await res.json().catch(() => null);
+      setTimeErr(p?.title ?? "Time log failed");
+    }
+  };
+
+  const previewICS = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIcsBusy(true);
+    setIcsErr("");
+    setIcsPreview(null);
+    const res = await api("/calendar/preview", {
+      method: "POST",
+      body: JSON.stringify({ ics_text: icsText }),
+    });
+    setIcsBusy(false);
+    if (res.ok) {
+      const out = await res.json();
+      setIcsPreview(out.events ?? out);
+    } else {
+      const p = await res.json().catch(() => null);
+      setIcsErr(p?.title ?? "Preview failed");
+    }
+  };
+
   // Assistant (§15.6) — QBR/steering deck state
   const [asKind, setAsKind] = useState<"qbr" | "steering">("qbr");
   const [asBusy, setAsBusy] = useState(false);
@@ -212,6 +293,7 @@ export default function ProjectDetail() {
       api(`/projects/${id}/budget`),
       api(`/invoices`),
       api(`/rate-cards`),
+      api(`/projects/${id}/notes`),
     ]);
     if (results[0].status === "fulfilled" && results[0].value.status === 401) { router.push("/login"); return; }
     let cust: string | undefined;
@@ -240,6 +322,7 @@ export default function ProjectDetail() {
       const def = cards.find((c) => c.customer_id === null);
       if (def) setCurrency(def.currency);
     }
+    if (results[8].status === "fulfilled" && results[8].value.ok) setNotes(await results[8].value.json());
   }, [id, router]);
 
   useEffect(() => { void load(); }, [load]);
@@ -831,6 +914,129 @@ export default function ProjectDetail() {
                   </div>
                 )}
               </div>
+            )}
+          </section>
+        )}
+
+        <section aria-label="Notes" className="rounded-[10px] border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text">Notes</h2>
+          <form onSubmit={addNote} className="mt-2 flex gap-2">
+            <input
+              value={noteBody}
+              onChange={(e) => setNoteBody(e.target.value)}
+              placeholder="Add a note… (append-only, no edits)"
+              aria-label="New note"
+              className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+            />
+            <button
+              disabled={noteBusy || !noteBody.trim()}
+              className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+            >
+              {noteBusy ? "Adding…" : "Add"}
+            </button>
+          </form>
+          {noteErr && (
+            <p className="mt-2 text-sm text-danger" role="alert">
+              {noteErr}
+            </p>
+          )}
+          {notes && notes.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {[...notes].reverse().map((n) => (
+                <li key={n.id} className="rounded-[10px] border border-border bg-bg px-3 py-2">
+                  <p className="text-sm text-text">{n.body}</p>
+                  <p className="mt-0.5 text-xs text-muted">
+                    {n.author} · {n.created_at.replace("T", " ").slice(0, 16)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section aria-label="Log time" className="rounded-[10px] border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text">Log time</h2>
+          <form onSubmit={submitTime} className="mt-2 flex flex-wrap gap-2">
+            <select
+              value={timeTaskID}
+              onChange={(e) => setTimeTaskID(e.target.value)}
+              aria-label="Task"
+              className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+            >
+              <option value="">(project-level)</option>
+              {(tasks ?? []).filter((t) => t.status !== "done").map((t) => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </select>
+            <input
+              value={timeMinutes}
+              onChange={(e) => setTimeMinutes(e.target.value)}
+              placeholder="90"
+              aria-label="Minutes"
+              inputMode="numeric"
+              className="w-24 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+            />
+            <input
+              value={timeNote}
+              onChange={(e) => setTimeNote(e.target.value)}
+              placeholder="optional note"
+              aria-label="Time note"
+              className="w-40 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+            />
+            <button
+              disabled={timeBusy || !timeMinutes || Number(timeMinutes) <= 0}
+              className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+            >
+              {timeBusy ? "Logging…" : "Log"}
+            </button>
+          </form>
+          {timeMsg && <p className="mt-2 text-sm text-success">{timeMsg}</p>}
+          {timeErr && (
+            <p className="mt-2 text-sm text-danger" role="alert">
+              {timeErr}
+            </p>
+          )}
+        </section>
+
+        {me && ["owner", "admin", "manager"].includes(me.role) && (
+          <section aria-label="Calendar import" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Calendar</h2>
+            <p className="mt-1 text-xs text-muted">
+              Paste an ICS export to preview importable events (dry run). Import needs a hosted ICS URL and runs in the background.
+            </p>
+            <form onSubmit={previewICS} className="mt-2 flex gap-2">
+              <textarea
+                value={icsText}
+                onChange={(e) => setIcsText(e.target.value)}
+                placeholder={"BEGIN:VCALENDAR…\nEND:VCALENDAR"}
+                aria-label="ICS text"
+                rows={3}
+                className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 font-mono text-xs text-text placeholder:text-muted"
+              />
+              <button
+                disabled={icsBusy || !icsText.trim()}
+                className="self-stretch rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {icsBusy ? "Parsing…" : "Preview"}
+              </button>
+            </form>
+            {icsErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {icsErr}
+              </p>
+            )}
+            {icsPreview && (
+              <ul className="mt-3 space-y-1" role="status">
+                {icsPreview.map((ev) => (
+                  <li key={ev.uid} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="truncate text-text">{ev.summary}</span>
+                    <span className="shrink-0 text-xs text-muted">{ev.minutes}m</span>
+                  </li>
+                ))}
+                {icsPreview.length === 0 && (
+                  <li className="text-xs text-muted">No importable events found.</li>
+                )}
+              </ul>
             )}
           </section>
         )}
