@@ -4405,7 +4405,7 @@ paths:
           description: "cheap-model LLM pass drafts a 2-sentence portfolio note (requires llm config; degrades silently)"
       responses:
         "200":
-          description: Signals (red first)
+          description: Signals (ML risk_score desc; severity is the untouched action contract)
           content:
             application/json:
               schema:
@@ -4428,6 +4428,19 @@ paths:
                         evidence:
                           type: object
                           description: Ids, counts, and timestamps that triggered the signal
+                        risk_score:
+                          type: number
+                          minimum: 0
+                          maximum: 1
+                          description: Logistic risk ranking (§357 'rules + ML') — presentation-only, drives list order
+                        factors:
+                          type: array
+                          description: The score decomposition — [{name, weight}] so every ranking is auditable
+                          items:
+                            type: object
+                            properties:
+                              name: {type: string}
+                              weight: {type: number}
                   narrative:
                     type: string
                     description: LLM-drafted portfolio note when narrate=1 and a provider is configured

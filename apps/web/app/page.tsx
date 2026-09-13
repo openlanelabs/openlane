@@ -57,7 +57,7 @@ export default function Dashboard() {
   const [reason, setReason] = useState("");
   const [margins, setMargins] = useState<PortfolioMargins | null>(null);
   const [signals, setSignals] = useState<
-    { kind: string; severity: string; project_id: string; project: string; title: string }[] | null
+    { kind: string; severity: string; project_id: string; project: string; title: string; risk_score?: number }[] | null
   >(null);
   // Analyst (§15.6) — NL question → curated query + narrative
   const [qa, setQa] = useState("");
@@ -269,6 +269,9 @@ export default function Dashboard() {
                       {s.project}
                     </a>{" "}
                     — {s.title}
+                    {s.risk_score != null && (
+                      <span className="ml-1 text-xs text-muted/70">risk {s.risk_score.toFixed(2)}</span>
+                    )}
                   </span>
                 </li>
               ))}

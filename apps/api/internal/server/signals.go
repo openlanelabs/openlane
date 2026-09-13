@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,12 +13,14 @@ import (
 // narration arrive with the BYO-LLM router.
 
 type signalOut struct {
-	Kind      string `json:"kind"`
-	Severity  string `json:"severity"` // red | warn
-	ProjectID string `json:"project_id"`
-	Project   string `json:"project"`
-	Title     string `json:"title"`
-	Evidence  []byte `json:"evidence"`
+	Kind      string          `json:"kind"`
+	Severity  string          `json:"severity"` // red | warn — the action contract (automations/nudges) NEVER re-ranked
+	ProjectID string          `json:"project_id"`
+	Project   string          `json:"project"`
+	Title     string          `json:"title"`
+	Evidence  json.RawMessage `json:"evidence"`
+	RiskScore float64         `json:"risk_score"`        // ML ranking (§357) — presentation-only
+	Factors   json.RawMessage `json:"factors,omitempty"` // the decomposition: [{name, weight}]
 }
 
 func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +159,11 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 				Evidence: mustJSON(map[string]any{"billed": m.Billed, "cost": m.Cost, "margin_pct": pct})})
 		}
 	}
+
+	// ML risk ranking (§357 'rules + ML') — after ALL arms (incl.
+	// margin_dip) are assembled; ordering becomes model-driven,
+	// severity stays the automation contract (automations/nudges).
+	rankSignals(out)
 
 	// ?narrate=1 (manager+, P2 §15.6): one cheap-model LLM pass that
 	// drafts a two-sentence portfolio note. Deterministic titles stay —
