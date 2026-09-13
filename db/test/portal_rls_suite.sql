@@ -1222,6 +1222,25 @@ INSERT INTO test_results
 SELECT 'T28c draft default status', status = 'draft'
 FROM migration_runs WHERE name = 'legacy accounts';
 
+-- ---------- T29: config sheets (00035) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO config_sheets (workspace_id, project_id, sheet)
+VALUES ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555',
+        '{"customer_goals":"g","tasks":[],"budget_hours":null,"notes":""}');
+INSERT INTO test_results
+SELECT 'T29a sheet roundtrip', EXISTS (
+  SELECT 1 FROM config_sheets WHERE sheet->>'customer_goals' = 'g');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T29b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM config_sheets WHERE sheet->>'customer_goals' = 'g');
+
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T29c draft default status', status = 'draft'
+FROM config_sheets WHERE sheet->>'customer_goals' = 'g';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

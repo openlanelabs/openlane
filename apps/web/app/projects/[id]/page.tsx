@@ -103,6 +103,47 @@ export default function ProjectDetail() {
   const [daResult, setDaResult] = useState<
     { doc_id: string; uncited: { index: number; text: string }[]; model: string; cost_cents: number } | null
   >(null);
+  // Workforce/Config Agent flow (§15.3)
+  const [wfResponseID, setWfResponseID] = useState("");
+  const [wfBusy, setWfBusy] = useState(false);
+  const [wfErr, setWfErr] = useState("");
+  const [wfSheet, setWfSheet] = useState<
+    | { config_sheet_id: string; sheet: { customer_goals: string; tasks: { title: string; owner_type: string; due_days: number; customer_visible: boolean }[]; budget_hours: number | null; notes: string }; model: string; cost_cents: number }
+    | null
+  >(null);
+  const [wfDone, setWfDone] = useState("");
+
+  const genSheet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWfBusy(true);
+    setWfErr("");
+    setWfSheet(null);
+    setWfDone("");
+    const res = await api(`/api/agents/config/sheet`, {
+      method: "POST",
+      body: JSON.stringify({ project_id: id, form_response_id: wfResponseID }),
+    });
+    setWfBusy(false);
+    if (res.ok) setWfSheet(await res.json());
+    else {
+      const p = await res.json().catch(() => null);
+      setWfErr(p?.title ?? "Sheet generation failed");
+    }
+  };
+
+  const approveSheet = async () => {
+    if (!wfSheet) return;
+    setWfBusy(true);
+    const res = await api(`/api/agents/config/${wfSheet.config_sheet_id}/approve`, { method: "POST" });
+    setWfBusy(false);
+    if (res.ok) {
+      const out = await res.json();
+      setWfDone(`executed — ${out.refs.task_ids.length} task${out.refs.task_ids.length === 1 ? "" : "s"} created${out.refs.budget_hours_set ? " + budget set" : ""}`);
+    } else {
+      const p = await res.json().catch(() => null);
+      setWfErr(p?.title ?? "Approve failed");
+    }
+  };
 
   const addDaSource = () => {
     if (!daSrcLabel.trim() || !daSrcText.trim()) return;
@@ -655,6 +696,61 @@ export default function ProjectDetail() {
                     </ul>
                   </div>
                 )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {me && ["owner", "admin", "manager"].includes(me.role) && (
+          <section aria-label="Workforce Agent" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Workforce Agent</h2>
+            <p className="mt-1 text-xs text-muted">
+              Turns an order-form response into a project setup sheet — tasks + budget it proposes, you approve, code executes (§15.3). Grab a response id from the form's CSV export.
+            </p>
+            <form onSubmit={genSheet} className="mt-3 flex flex-wrap gap-2">
+              <input
+                value={wfResponseID}
+                onChange={(e) => setWfResponseID(e.target.value)}
+                placeholder="Form response id (uuid)"
+                aria-label="Form response id"
+                className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <button
+                disabled={wfBusy || !wfResponseID}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {wfBusy ? "Working…" : "Generate sheet"}
+              </button>
+            </form>
+            {wfErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {wfErr}
+              </p>
+            )}
+            {wfSheet && (
+              <div className="mt-3 space-y-2 rounded-[10px] border border-border bg-bg p-3" role="status">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-text">{wfSheet.sheet.customer_goals || "Setup sheet"}</p>
+                  <button
+                    onClick={approveSheet}
+                    disabled={wfBusy || !!wfDone}
+                    className="rounded-[10px] bg-primary px-4 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+                  >
+                    Approve + create
+                  </button>
+                </div>
+                <ul className="space-y-1 text-xs text-text">
+                  {wfSheet.sheet.tasks.map((t, i) => (
+                    <li key={i}>
+                      {t.title} <span className="text-muted">· {t.owner_type} · {t.due_days}d{t.customer_visible ? " · visible" : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+                {wfSheet.sheet.budget_hours != null && (
+                  <p className="text-xs text-muted">budget: {wfSheet.sheet.budget_hours}h</p>
+                )}
+                <p className="text-xs text-muted">{wfSheet.model} · {wfSheet.cost_cents}¢ — nothing is created until you approve.</p>
+                {wfDone && <p className="text-sm text-success">{wfDone}</p>}
               </div>
             )}
           </section>
