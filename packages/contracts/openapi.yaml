@@ -3956,6 +3956,90 @@ paths:
         "404": {description: Project not found}
         "502": {description: LLM provider failed}
         "503": {description: Agents disabled (kill switch)}
+  /theme:
+    put:
+      summary: Set the workspace's portal theme (white-label)
+      description: >
+        §499 white-label: logo_url (any hosted image), brand_color
+        (6-digit hex), no_branding (hide the OpenLane wordmark).
+        The portal session and host resolution carry the theme;
+        AA contrast is enforced client-side on the portal.
+      operationId: putTheme
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logo_url:
+                  type: [string, "null"]
+                  maxLength: 2048
+                brand_color:
+                  type: [string, "null"]
+                  pattern: "^#[0-9a-fA-F]{6}$"
+                no_branding: {type: boolean}
+      responses:
+        "200":
+          description: Applied
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PortalTheme"}
+        "400": {description: Invalid hex color or logo_url}
+        "403": {description: Manager role required}
+    get:
+      summary: Read the workspace theme (member-readable)
+      operationId: getTheme
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Current theme (all-null when unset)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PortalTheme"}
+        "403": {description: Not a workspace member}
+  /portal/host:
+    get:
+      summary: Resolve a branded host to its workspace (public routing)
+      description: >
+        Public, unauthenticated: a hostname that is a VERIFIED
+        workspace domain resolves to {workspace_id, theme}; anything
+        else returns {workspace_id: null} and the caller serves the
+        standard portal (§229 fallback — never a 404). Port is
+        stripped from the host parameter.
+      operationId: portalHostResolve
+      parameters:
+        - name: host
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Routing decision
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workspace_id:
+                    type: [string, "null"]
+                    format: uuid
+                  theme:
+                    type: [object, "null"]
+        "400": {description: "missing or oversized host parameter"}
   /domains:
     put:
       summary: Claim a custom portal domain (admin)
@@ -4636,6 +4720,14 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    PortalTheme:
+      type: object
+      properties:
+        logo_url:
+          type: [string, "null"]
+        brand_color:
+          type: [string, "null"]
+        no_branding: {type: boolean}
     WorkspaceDomain:
       type: object
       properties:

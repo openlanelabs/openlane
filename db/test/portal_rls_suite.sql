@@ -1302,6 +1302,30 @@ INSERT INTO test_results
 SELECT 'T31c cross-ws write blocked', count(*) = 1 FROM workspace_domains
 WHERE domain = 'portal.acme.test';
 
+-- ---------- T32: workspace themes (00038) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO workspace_themes (workspace_id, logo_url, brand_color, no_branding)
+VALUES ('11111111-1111-1111-1111-111111111111', 'https://acme.test/l.png', '#2563eb', true)
+ON CONFLICT (workspace_id) DO NOTHING;
+INSERT INTO test_results
+SELECT 'T32a theme roundtrip', EXISTS (
+  SELECT 1 FROM workspace_themes WHERE brand_color = '#2563eb');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T32b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM workspace_themes WHERE brand_color = '#2563eb');
+
+-- SECURITY DEFINER helpers work from any ctx (portal pattern):
+SELECT set_config('app.workspace_id', '', false);
+INSERT INTO test_results
+SELECT 'T32c theme_for helper resolves', workspace_theme_for('11111111-1111-1111-1111-111111111111')::text
+  LIKE '%2563eb%';
+
+-- host routing fn: verified only
+INSERT INTO test_results
+SELECT 'T32d host fn unverified null', (workspace_for_host('never-claimed.test'))::text = 'null';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

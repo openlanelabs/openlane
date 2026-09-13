@@ -16,6 +16,7 @@ type Session = {
   customer_name: string;
   contact_name: string;
   expires_at: string;
+  theme?: { logo_url: string | null; brand_color: string | null; no_branding: boolean } | null;
 };
 
 type Approval = {
@@ -123,13 +124,33 @@ export default function PortalClient({
     { key: "docs", label: "Docs", badge: initialDocs.length },
   ];
 
+  // §499 white-label: brand color w/ AA guard (4.5:1 on white), logo,
+  // and no OpenLane wordmark when no_branding.
+  const brand = session.theme?.brand_color ?? null;
+  const logo = session.theme?.logo_url ?? null;
+  const aaOk = (() => {
+    if (!brand) return false;
+    const m = /^#([0-9a-f]{6})$/i.exec(brand);
+    if (!m) return false;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    void lum;
+    return (1.05) / (L + 0.05) >= 4.5; // contrast vs white
+  })();
+  const brandStyle = aaOk ? ({ "--brand": brand } as React.CSSProperties) : undefined;
+
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="min-h-screen bg-bg" style={brandStyle}>
       <header className="border-b border-border bg-surface px-4 py-4">
         <div className="mx-auto flex max-w-xl items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-text">{session.customer_name}</p>
-            <p className="text-xs text-muted">{session.project_name}</p>
+          <div className="flex items-center gap-2">
+            {logo && <img src={logo} alt="" className="h-7 w-auto max-w-28 object-contain" />}
+            <div>
+              <p className="text-sm font-semibold text-text">{session.customer_name}</p>
+              <p className="text-xs text-muted">{session.project_name}</p>
+            </div>
           </div>
           <p className="text-xs text-muted">Hi, {session.contact_name.split(" ")[0]}</p>
         </div>
@@ -144,7 +165,7 @@ export default function PortalClient({
               aria-selected={tab === t.key}
               onClick={() => setTab(t.key)}
               className={`rounded-[10px] px-3 py-2 text-sm font-medium ${
-                tab === t.key ? "bg-primary text-white" : "bg-surface text-text border border-border"
+                tab === t.key ? "bg-[var(--brand,var(--color-primary))] text-white" : "bg-surface text-text border border-border"
               }`}
             >
               {t.label}
@@ -188,7 +209,7 @@ export default function PortalClient({
                 aria-valuemax={100}
               >
                 <div
-                  className="h-full rounded-full bg-primary transition-all duration-150"
+                  className="h-full rounded-full bg-[var(--brand,var(--color-primary))] transition-all duration-150"
                   style={{ width: `${pct}%` }}
                 />
               </div>
@@ -310,7 +331,7 @@ function TaskCard({
           <button
             onClick={onComplete}
             disabled={pending}
-            className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            className="rounded-[10px] bg-[var(--brand,var(--color-primary))] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             aria-label={`Complete: ${task.title}`}
           >
             {pending ? "…" : "Complete"}
@@ -399,7 +420,7 @@ function ChatPanel({ token, taskId }: { token: string; taskId: string }) {
         <button
           onClick={send}
           disabled={busy || !body.trim()}
-          className="rounded-[10px] bg-primary px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded-[10px] bg-[var(--brand,var(--color-primary))] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
         >
           {busy ? "…" : "Send"}
         </button>

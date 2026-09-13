@@ -66,6 +66,49 @@ export default function AgentsPage() {
     if (res.ok) setMigrList(await res.json());
   };
 
+  // Portal theme state (§499 white-label)
+  const [th, setTh] = useState<{ logo_url: string | null; brand_color: string | null; no_branding: boolean } | null>(null);
+  const [thLogo, setThLogo] = useState("");
+  const [thColor, setThColor] = useState("");
+  const [thMsg, setThMsg] = useState("");
+
+  const loadTheme = async () => {
+    const res = await api("/api/theme");
+    if (res.ok) {
+      const t = await res.json();
+      setTh(t);
+      setThLogo(t.logo_url ?? "");
+      setThColor(t.brand_color ?? "");
+    }
+  };
+
+  const saveTheme = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setThMsg("");
+    const body: Record<string, unknown> = {
+      logo_url: thLogo.trim() === "" ? null : thLogo.trim(),
+      brand_color: thColor.trim() === "" ? null : thColor.trim(),
+      no_branding: th?.no_branding ?? false,
+    };
+    const res = await api("/api/theme", { method: "PUT", body: JSON.stringify(body) });
+    if (res.ok) {
+      setThMsg("Theme saved — customer portals pick it up on next open.");
+      loadTheme();
+    } else {
+      const p = await res.json().catch(() => null);
+      setThMsg(p?.title ?? "Save failed");
+    }
+  };
+
+  const toggleNoBranding = async () => {
+    if (!th) return;
+    const res = await api("/api/theme", {
+      method: "PUT",
+      body: JSON.stringify({ logo_url: th.logo_url, brand_color: th.brand_color, no_branding: !th.no_branding }),
+    });
+    if (res.ok) loadTheme();
+  };
+
   // Custom domains state (P1 §199)
   const [domains, setDomains] = useState<{ id: string; domain: string; verified: boolean; challenge: string }[] | null>(null);
   const [newDomain, setNewDomain] = useState("");
@@ -266,6 +309,7 @@ export default function AgentsPage() {
         loadFinance();
         loadJira();
         loadDomains();
+        loadTheme();
       }
     })();
   }, [router]);
@@ -639,6 +683,47 @@ export default function AgentsPage() {
               {fgMsg && <span className="text-xs text-muted">{fgMsg}</span>}
             </form>
           )}
+
+        {isAdmin && (
+          <section aria-label="Portal theme" className="rounded-xl border border-border bg-surface p-4">
+            <div>
+              <p className="text-sm font-medium text-text">Portal theme</p>
+              <p className="text-xs text-muted">
+                White-label the customer portal (§499): your logo, your brand color (AA-checked client-side), and no OpenLane wordmark. Applies to every portal link in this workspace.
+              </p>
+            </div>
+            {th && (
+              <div className="mt-3">
+                <form onSubmit={saveTheme} className="flex flex-wrap gap-2">
+                  <input
+                    value={thLogo}
+                    onChange={(e) => setThLogo(e.target.value)}
+                    placeholder="Logo URL (https://…/logo.png)"
+                    aria-label="Logo URL"
+                    className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+                  />
+                  <input
+                    value={thColor}
+                    onChange={(e) => setThColor(e.target.value)}
+                    placeholder="#2563eb"
+                    aria-label="Brand color"
+                    className="w-32 rounded-[10px] border border-border bg-bg px-3 py-2 font-mono text-sm text-text placeholder:text-muted"
+                  />
+                  <button
+                    className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600"
+                  >
+                    Save
+                  </button>
+                </form>
+                <label className="mt-2 flex items-center gap-2 text-xs text-text">
+                  <input type="checkbox" checked={th.no_branding} onChange={toggleNoBranding} />
+                  Hide OpenLane branding (white-label)
+                </label>
+                {thMsg && <p className="mt-1 text-xs text-muted">{thMsg}</p>}
+              </div>
+            )}
+          </section>
+        )}
 
         {isAdmin && (
           <section aria-label="Jira" className="rounded-xl border border-border bg-surface p-4">
