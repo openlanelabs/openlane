@@ -66,6 +66,40 @@ export default function AgentsPage() {
     if (res.ok) setMigrList(await res.json());
   };
 
+  // Jira settings state (integrations)
+  const [jira, setJira] = useState<{ configured: boolean; instance_url?: string } | null>(null);
+  const [jiraURL, setJiraURL] = useState("");
+  const [jiraPAT, setJiraPAT] = useState("");
+  const [jiraSecret, setJiraSecret] = useState("");
+  const [jiraMsg, setJiraMsg] = useState("");
+
+  const loadJira = async () => {
+    const res = await api("/api/integrations/jira");
+    if (res.ok) {
+      const c = await res.json();
+      setJira(c);
+      if (c.configured) setJiraURL(c.instance_url ?? "");
+    }
+  };
+
+  const saveJira = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setJiraMsg("");
+    const res = await api("/api/integrations/jira", {
+      method: "PUT",
+      body: JSON.stringify({ instance_url: jiraURL, pat: jiraPAT, webhook_secret: jiraSecret }),
+    });
+    if (res.ok) {
+      setJiraMsg("Saved. Status sync + task linking active for this workspace.");
+      setJiraPAT("");
+      setJiraSecret("");
+      loadJira();
+    } else {
+      const p = await res.json().catch(() => null);
+      setJiraMsg(p?.title ?? "Save failed");
+    }
+  };
+
   // Finance Guardian state (§15.5)
   const [fgCfg, setFgCfg] = useState<{ margin_warn_pct: number; margin_red_pct: number; min_billed: number; enabled: boolean } | null>(null);
   const [fgFlags, setFgFlags] = useState<
@@ -184,6 +218,7 @@ export default function AgentsPage() {
         }
         loadMigrList();
         loadFinance();
+        loadJira();
       }
     })();
   }, [router]);
@@ -557,6 +592,58 @@ export default function AgentsPage() {
               {fgMsg && <span className="text-xs text-muted">{fgMsg}</span>}
             </form>
           )}
+
+        {isAdmin && (
+          <section aria-label="Jira" className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium text-text">Jira</p>
+                <p className="text-xs text-muted">
+                  Status sync (Jira wins v1) + task linking. PAT sealed AES-256-GCM server-side, never returned.
+                </p>
+              </div>
+              {jira && (
+                <span className={`rounded-full px-2 py-0.5 text-xs ${jira.configured ? "bg-success/10 text-success" : "bg-warn/10 text-warn"}`}>
+                  {jira.configured ? jira.instance_url : "not configured"}
+                </span>
+              )}
+            </div>
+            <form onSubmit={saveJira} className="mt-3 space-y-2">
+              <input
+                value={jiraURL}
+                onChange={(e) => setJiraURL(e.target.value)}
+                placeholder="https://yourcompany.atlassian.net"
+                aria-label="Jira instance URL"
+                className="w-full rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="password"
+                  value={jiraPAT}
+                  onChange={(e) => setJiraPAT(e.target.value)}
+                  placeholder={jira?.configured ? "PAT (leave blank to keep)" : "Personal access token"}
+                  aria-label="Jira PAT"
+                  className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+                />
+                <input
+                  type="password"
+                  value={jiraSecret}
+                  onChange={(e) => setJiraSecret(e.target.value)}
+                  placeholder={jira?.configured ? "Webhook secret (blank keeps)" : "Webhook secret (min 16 chars)"}
+                  aria-label="Webhook secret"
+                  className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+                />
+                <button
+                  disabled={!jiraURL || (!jiraPAT && !jiraSecret && !jira?.configured)}
+                  className="self-stretch rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+              {jiraMsg && <p className="text-xs text-muted">{jiraMsg}</p>}
+            </form>
+          </section>
+        )}
         </section>
       </div>
     </main>
