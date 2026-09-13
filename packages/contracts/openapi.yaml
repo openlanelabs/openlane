@@ -3877,6 +3877,85 @@ paths:
                   min_billed: {type: number}
                   enabled: {type: boolean}
         "403": {description: Not a workspace member}
+  /agents/assistant/deck:
+    post:
+      summary: Assistant — QBR/steering deck + talk track (P2 §15.6)
+      description: >
+        The final Nitro agent. Gathers the project's grounding data
+        deterministically (canonical margins, task counts, budget burn,
+        approvals, this project's signals), then the smart model drafts
+        a QBR or steering deck as markdown (Executive Summary, Wins,
+        Risks & Mitigations, Budget & Margin, Next Steps, Talk Track).
+        Every number must trace to the grounding data; the Doc Agent's
+        uncited-paragraph validator flags fabricated claims in the
+        response. The response echoes the grounding so the human
+        verifies in one glance. Draft saved as a docs row
+        (customer_visible=false) + doc_versions v1 — humans publish.
+        Metered to agent_runs (agent=assistant).
+      operationId: assistantDeck
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, kind]
+              properties:
+                project_id: {type: string, format: uuid}
+                kind:
+                  type: string
+                  enum: [qbr, steering]
+      responses:
+        "200":
+          description: Deck drafted + saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  doc_id: {type: string, format: uuid}
+                  uncited:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: {type: integer}
+                        text: {type: string}
+                  grounding:
+                    type: object
+                    properties:
+                      project: {type: string}
+                      customer: {type: string}
+                      billed: {type: number}
+                      cost: {type: number}
+                      margin_pct:
+                        type: [integer, "null"]
+                      budget_hours:
+                        type: [integer, "null"]
+                      logged_minutes: {type: integer}
+                      open_tasks: {type: integer}
+                      overdue_tasks: {type: integer}
+                      pending_approvals: {type: integer}
+                      upcoming:
+                        type: array
+                        items: {type: string}
+                      signals:
+                        type: array
+                        items: {type: string}
+                  model: {type: string}
+                  cost_cents: {type: integer}
+        "400": {description: "invalid kind, or no llm configured"}
+        "403": {description: Manager role required}
+        "404": {description: Project not found}
+        "502": {description: LLM provider failed}
+        "503": {description: Agents disabled (kill switch)}
   /agents/analyst/query:
     post:
       summary: Analyst — NL question to curated query + why-narrative (P2 §15.6)
