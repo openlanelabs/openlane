@@ -3763,6 +3763,120 @@ paths:
                       budget_hours_set: {type: boolean}
         "403": {description: Manager role required}
         "404": {description: Sheet not found or already executed}
+  /agents/finance/guardian:
+    get:
+      summary: Finance Guardian — margin threshold flags (P2 §15.5)
+      description: >
+        Runs the canonical per-project margin query (same math as
+        /margins and the margin_dip signal) and flags projects under
+        the workspace's configurable thresholds. Flags, never fixes:
+        the guardian is read-only — zero writes outside its
+        agent_runs row (§15.5 'doesn't auto-fix money without
+        approval'). Returns the flags with severity (warn|red),
+        threshold fired, and a suggested action string.
+      operationId: financeGuardian
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Threshold flags (empty when disabled)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: {type: boolean}
+                  thresholds:
+                    type: object
+                    properties:
+                      warn_pct: {type: integer}
+                      red_pct: {type: integer}
+                      min_billed: {type: number}
+                  flags:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        project_id: {type: string, format: uuid}
+                        name: {type: string}
+                        billed: {type: number}
+                        cost: {type: number}
+                        margin_pct:
+                          type: [integer, "null"]
+                        severity: {type: string, enum: [warn, red]}
+                        threshold: {type: integer}
+                        suggestion: {type: string}
+        "403": {description: Manager role required}
+        "503": {description: Agents disabled (kill switch)}
+  /agents/finance/config:
+    put:
+      summary: Configure Finance Guardian thresholds (admin)
+      description: >
+        Per-workspace thresholds: margin_warn_pct (default 30),
+        margin_red_pct (default 20), min_billed (skip noise, default
+        0), enabled (default true). warn must be >= red. Audited as
+        finance.config_saved.
+      operationId: putFinanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                margin_warn_pct: {type: integer, minimum: 0, maximum: 100}
+                margin_red_pct: {type: integer, minimum: 0, maximum: 100}
+                min_billed: {type: number, minimum: 0}
+                enabled: {type: boolean}
+      responses:
+        "200":
+          description: Applied config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  margin_warn_pct: {type: integer}
+                  margin_red_pct: {type: integer}
+                  min_billed: {type: number}
+                  enabled: {type: boolean}
+        "400": {description: "invalid thresholds (warn < red, out of 0-100)"}
+        "403": {description: Admin role required}
+    get:
+      summary: Read Finance Guardian thresholds (member-readable)
+      operationId: getFinanceConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Current config (defaults when unset)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  margin_warn_pct: {type: integer}
+                  margin_red_pct: {type: integer}
+                  min_billed: {type: number}
+                  enabled: {type: boolean}
+        "403": {description: Not a workspace member}
   /agents/analyst/query:
     post:
       summary: Analyst — NL question to curated query + why-narrative (P2 §15.6)

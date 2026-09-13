@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -96,37 +97,13 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 		  AND COALESCE(l.mins,0) >= p.budget_hours * 60 * 0.8
 
 		UNION ALL
-		-- margin_dip: §324 margin under 20% where money has moved
-		SELECT 'margin_dip', 'red', m.project_id::text, m.name,
-		       format('Margin at %s%% (billed %s, cost %s)',
-		              m.margin_pct, m.billed, m.cost),
-		       jsonb_build_object('billed', m.billed, 'cost', m.cost, 'margin_pct', m.margin_pct)
-		FROM (
-		    SELECT pr.id AS project_id, pr.name,
-		           sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * rc.hourly_rate)::numeric(12,2) AS billed,
-		           sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * COALESCE(pp.cost_rate, 0))::numeric(12,2) AS cost,
-		           round(100.0 * (sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * rc.hourly_rate)
-		                          - sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * COALESCE(pp.cost_rate, 0)))
-		                 / NULLIF(sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * rc.hourly_rate), 0))::int AS margin_pct
-		    FROM projects pr
-		    JOIN time_entries te ON te.project_id = pr.id
-		         AND te.status IN ('approved','invoiced') AND te.deleted_at IS NULL
-		    LEFT JOIN people pp ON pp.user_id = te.user_id AND pp.workspace_id = te.workspace_id
-		    LEFT JOIN LATERAL (
-		        SELECT rcr.hourly_rate
-		        FROM rate_card_rates rcr
-		        JOIN rate_cards rc ON rc.id = rcr.rate_card_id AND rc.is_active
-		        WHERE rcr.role = COALESCE(pp.role, '')
-		          AND rc.workspace_id = te.workspace_id
-		          AND (rc.customer_id = pr.customer_id OR rc.customer_id IS NULL)
-		        ORDER BY rc.customer_id NULLS LAST
-		        LIMIT 1
-		    ) rc ON true
-		    WHERE pr.deleted_at IS NULL
-		    GROUP BY pr.id, pr.name
-		    HAVING sum(EXTRACT(EPOCH FROM (te.ended_at - te.started_at))/3600 * rc.hourly_rate) > 0
-		) m
-		WHERE m.margin_pct < 20
+		-- margin_dip moved to Go: appended post-query from the
+		-- canonical marginRows() so it can never drift from
+		-- /margins or the Finance Guardian (and stays parametrized —
+		-- no data ever interpolates into SQL text).
+		SELECT 'margin_dip' AS kind, 'red' AS severity, ''::text AS project_id, '' AS project,
+		       '' AS title, '{}'::jsonb AS evidence
+		WHERE false
 
 		UNION ALL
 		-- approval_stale: pending approval > 7 days
@@ -158,6 +135,26 @@ func (s *Server) listSignals(w http.ResponseWriter, r *http.Request) {
 	if err := rows.Err(); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// margin_dip: appended from the canonical marginRows() — the same
+	// math as /margins and the Finance Guardian (the EPOCH-hours math
+	// this replaces billed ended-started spans, which silently diverged
+	// from the minutes-based billing truth).
+	if mrows, merr := marginRows(ctx, tx); merr == nil {
+		for _, m := range mrows {
+			if m.Billed <= 0 {
+				continue
+			}
+			pct := int((m.Billed - m.Cost) / m.Billed * 100)
+			if pct >= 20 {
+				continue
+			}
+			out = append(out, signalOut{Kind: "margin_dip", Severity: "red",
+				ProjectID: m.ProjectID, Project: m.Name,
+				Title:    fmt.Sprintf("Margin at %d%% (billed %.2f, cost %.2f)", pct, m.Billed, m.Cost),
+				Evidence: mustJSON(map[string]any{"billed": m.Billed, "cost": m.Cost, "margin_pct": pct})})
+		}
 	}
 
 	// ?narrate=1 (manager+, P2 §15.6): one cheap-model LLM pass that
