@@ -3956,6 +3956,114 @@ paths:
         "404": {description: Project not found}
         "502": {description: LLM provider failed}
         "503": {description: Agents disabled (kill switch)}
+  /domains:
+    put:
+      summary: Claim a custom portal domain (admin)
+      description: >
+        Registers a branded host for this workspace's portal (P1
+        §199/§499). Lowercased + RFC 1123 validated. Returns a TXT
+        challenge to place at _openlane-challenge.<domain>; the domain
+        stays unverified until POST /domains/{id}/verify confirms it.
+        TLS termination lives at the hosting layer (reverse proxy with
+        on-demand ACME); on cert failure fall back to the wildcard
+        host and alert the operator (§229 — never 404).
+      operationId: putDomain
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain: {type: string, example: onboarding.acme.com}
+      responses:
+        "200":
+          description: Claimed (unverified) with TXT challenge
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkspaceDomain"}
+        "400": {description: Invalid hostname}
+        "403": {description: Manager role required}
+        "409": {description: Domain claimed by another workspace}
+    get:
+      summary: List this workspace's custom domains
+      operationId: listDomains
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Domains with verification state
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/WorkspaceDomain"}
+        "403": {description: Manager role required}
+  /domains/{id}/verify:
+    post:
+      summary: Verify a claimed domain via its TXT record
+      description: >
+        Looks up TXT _openlane-challenge.<domain> over stdlib DNS
+        (no HTTP fetch — no SSRF surface). Exact match against the
+        issued challenge marks the domain verified. Audited.
+      operationId: verifyDomain
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  domain: {type: string}
+                  verified: {type: boolean}
+        "400": {description: "TXT missing or mismatch (body names the expected record)"}
+        "403": {description: Manager role required}
+        "404": {description: Not found}
+  /domains/{id}:
+    delete:
+      summary: Remove a custom domain
+      operationId: deleteDomain
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Removed}
+        "403": {description: Manager role required}
+        "404": {description: Not found}
   /agents/analyst/query:
     post:
       summary: Analyst — NL question to curated query + why-narrative (P2 §15.6)
@@ -4528,6 +4636,14 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    WorkspaceDomain:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        domain: {type: string}
+        verified: {type: boolean}
+        challenge: {type: string}
+        created_at: {type: string}
     File:
       type: object
       properties:

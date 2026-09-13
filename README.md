@@ -109,6 +109,38 @@ Health: `GET /healthz` (liveness) and `GET /readyz` (DB roundtrip).
 Every request logs one line — `req=<id> method path status dur_ms` —
 and echoes `X-Request-Id`.
 
+### Custom portal domains (P1 §199/§229)
+
+Workspaces can brand their customer portal with their own host
+(`onboarding.acme.com`):
+
+1. **App side** (built in): admin claims the domain under
+   **Agents → Custom domains**, adds the shown TXT record
+   (`_openlane-challenge.<domain>`), clicks **Verify** — OpenLane
+   confirms the record over DNS and marks the domain verified.
+2. **Hosting side** (you): point DNS at your box and terminate TLS at
+   your reverse proxy with **on-demand ACME** — the domain is yours,
+   the cert is issued on first request. Caddy example:
+
+```caddy
+# wildcard fallback FIRST — the §229 contract: a broken/blocked cert
+# serves the default app, never a 404
+*.openlane.example {
+    reverse_proxy web:3000
+}
+onboarding.acme.com {
+    reverse_proxy web:3000   # web proxies /v1/* to the api
+    tls {
+        on_demand
+    }
+}
+```
+
+The wildcard vhost stays the default server block: if a custom
+domain's certificate fails to issue, the request falls back to the
+app origin and the operator gets the Caddy/ACME alert — customers
+never see a dead host.
+
 Backups / restore (local DB):
 
 ```bash

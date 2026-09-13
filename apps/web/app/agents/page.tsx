@@ -66,6 +66,52 @@ export default function AgentsPage() {
     if (res.ok) setMigrList(await res.json());
   };
 
+  // Custom domains state (P1 §199)
+  const [domains, setDomains] = useState<{ id: string; domain: string; verified: boolean; challenge: string }[] | null>(null);
+  const [newDomain, setNewDomain] = useState("");
+  const [domMsg, setDomMsg] = useState("");
+  const [domBusy, setDomBusy] = useState(false);
+
+  const loadDomains = async () => {
+    const res = await api("/api/domains");
+    if (res.ok) setDomains(await res.json());
+  };
+
+  const claimDomain = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDomBusy(true);
+    setDomMsg("");
+    const res = await api("/api/domains", {
+      method: "PUT",
+      body: JSON.stringify({ domain: newDomain }),
+    });
+    setDomBusy(false);
+    if (res.ok) {
+      setNewDomain("");
+      loadDomains();
+    } else {
+      const p = await res.json().catch(() => null);
+      setDomMsg(p?.title ?? "Claim failed");
+    }
+  };
+
+  const verifyDomain = async (id: string) => {
+    setDomMsg("Verifying via DNS…");
+    const res = await api(`/api/domains/${id}/verify`, { method: "POST" });
+    if (res.ok) {
+      setDomMsg("Verified ✓");
+      loadDomains();
+    } else {
+      const p = await res.json().catch(() => null);
+      setDomMsg(p?.title ?? "Verification failed");
+    }
+  };
+
+  const removeDomain = async (id: string) => {
+    await api(`/api/domains/${id}`, { method: "DELETE" });
+    loadDomains();
+  };
+
   // Jira settings state (integrations)
   const [jira, setJira] = useState<{ configured: boolean; instance_url?: string } | null>(null);
   const [jiraURL, setJiraURL] = useState("");
@@ -219,6 +265,7 @@ export default function AgentsPage() {
         loadMigrList();
         loadFinance();
         loadJira();
+        loadDomains();
       }
     })();
   }, [router]);
@@ -642,6 +689,70 @@ export default function AgentsPage() {
               </div>
               {jiraMsg && <p className="text-xs text-muted">{jiraMsg}</p>}
             </form>
+          </section>
+        )}
+
+        {isAdmin && (
+          <section aria-label="Custom domains" className="rounded-xl border border-border bg-surface p-4">
+            <div>
+              <p className="text-sm font-medium text-text">Custom domains</p>
+              <p className="text-xs text-muted">
+                Branded portal hosts (onboarding.acme.com). Add the TXT record we show you, verify, then point DNS at your OpenLane host — TLS is handled by your reverse proxy (§199/§229).
+              </p>
+            </div>
+            <form onSubmit={claimDomain} className="mt-3 flex gap-2">
+              <input
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                placeholder="onboarding.acme.com"
+                aria-label="New domain"
+                className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <button
+                disabled={domBusy || !newDomain.trim()}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {domBusy ? "Claiming…" : "Claim"}
+              </button>
+            </form>
+            {domMsg && <p className="mt-1 text-xs text-muted">{domMsg}</p>}
+            {domains && domains.length > 0 && (
+              <ul className="mt-3 space-y-2">
+                {domains.map((d) => (
+                  <li key={d.id} className="rounded-[10px] border border-border bg-bg px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-text">
+                        {d.domain}{" "}
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${d.verified ? "bg-success/10 text-success" : "bg-warn/10 text-warn"}`}>
+                          {d.verified ? "verified" : "unverified"}
+                        </span>
+                      </p>
+                      <span className="flex gap-2">
+                        {!d.verified && (
+                          <button
+                            onClick={() => verifyDomain(d.id)}
+                            className="rounded-[10px] bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-600"
+                          >
+                            Verify
+                          </button>
+                        )}
+                        <button
+                          onClick={() => removeDomain(d.id)}
+                          className="rounded-[10px] border border-border px-3 py-1 text-xs text-muted hover:text-text"
+                        >
+                          Remove
+                        </button>
+                      </span>
+                    </div>
+                    {!d.verified && (
+                      <p className="mt-1 break-all font-mono text-xs text-muted">
+                        TXT _openlane-challenge.{d.domain} → {d.challenge}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         )}
         </section>
