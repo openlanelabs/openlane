@@ -139,6 +139,7 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("POST /v1/projects/{id}/approvals", authed(s.createApproval))
 	mux.Handle("GET /v1/projects/{id}/approvals", authed(s.listProjectApprovals))
 	mux.Handle("POST /v1/approvals/{id}/reopen", authed(s.reopenApproval))
+	mux.Handle("POST /v1/approvals/{id}/decide", authed(s.decideStaffApproval))
 	mux.Handle("POST /v1/projects/{id}/forms", authed(s.createForm))
 	mux.Handle("GET /v1/projects/{id}/forms", authed(s.listProjectForms))
 	mux.Handle("GET /v1/forms/{id}/responses.csv", authed(s.exportFormResponsesCSV))

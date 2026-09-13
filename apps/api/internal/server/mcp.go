@@ -90,7 +90,7 @@ func (m *McpServer) logAgentRun(ctx context.Context, ws, tool string, args map[s
 
 // Tools: the v1 read surface.
 func (m *McpServer) Tools() []McpTool {
-	return []McpTool{
+	base := []McpTool{
 		{
 			Name:        "list_projects",
 			Description: "List the workspace's projects: id, name, status, health, progress %, target go-live.",
@@ -377,6 +377,7 @@ func (m *McpServer) Tools() []McpTool {
 			},
 		},
 	}
+	return append(base, mcpWriteTools(m)...)
 }
 
 // Dispatch: one JSON-RPC request → response. The stdio loop lives in
