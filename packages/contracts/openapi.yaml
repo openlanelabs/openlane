@@ -3311,6 +3311,46 @@ paths:
       responses:
         "204": {description: Reopened}
         "404": { $ref: "#/components/responses/NotFound" }
+  /approvals/{id}/decide:
+    post:
+      summary: Decide an approval (manager+) — executes agent-proposal payloads on approve
+      operationId: decideStaffApproval
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, changes_requested]
+                comment:
+                  type: string
+                  maxLength: 2000
+      responses:
+        "200":
+          description: Decided; `executed` carries the created ref for agent proposals
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  id: { type: string }
+                  executed: { type: string, description: "e.g. 'task <uuid>' — empty when no payload or rejected" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /portal/{token}/approvals:
     get:
       summary: Portal — pending approvals for the linked projects

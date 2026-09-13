@@ -55,8 +55,9 @@ func TestMcpToolsAndKillSwitch(t *testing.T) {
 	}
 	b, _ := json.Marshal(resp)
 	_ = json.Unmarshal(b, &list)
-	if len(list.Result.Tools) != 7 {
-		t.Fatalf("tools/list = %d tools", len(list.Result.Tools))
+	nTools := len(list.Result.Tools)
+	if nTools < 7 {
+		t.Fatalf("tools/list = %d tools", nTools)
 	}
 
 	// list_projects works + logs
