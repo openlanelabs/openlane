@@ -59,6 +59,31 @@ export default function Dashboard() {
   const [signals, setSignals] = useState<
     { kind: string; severity: string; project_id: string; project: string; title: string }[] | null
   >(null);
+  // Analyst (§15.6) — NL question → curated query + narrative
+  const [qa, setQa] = useState("");
+  const [qaBusy, setQaBusy] = useState(false);
+  const [qaAns, setQaAns] = useState<
+    { query: string; columns: string[]; rows: Record<string, string | number | null>[]; narrative: string; cost_cents: number } | null
+  >(null);
+  const [qaErr, setQaErr] = useState("");
+
+  const askAnalyst = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setQaBusy(true);
+    setQaErr("");
+    setQaAns(null);
+    const res = await api("/api/agents/analyst/query", {
+      method: "POST",
+      body: JSON.stringify({ question: qa }),
+    });
+    setQaBusy(false);
+    if (res.ok) {
+      setQaAns(await res.json());
+    } else {
+      const p = await res.json().catch(() => null);
+      setQaErr(p?.title ?? "The analyst couldn't answer that.");
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -168,6 +193,64 @@ export default function Dashboard() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-4 p-4">
+        {isManager && (
+          <section aria-label="Analyst" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Analyst</h2>
+            <p className="mt-1 text-xs text-muted">
+              Ask in plain English — the agent picks a curated query (never free SQL) and narrates the numbers it actually found.
+            </p>
+            <form onSubmit={askAnalyst} className="mt-2 flex gap-2">
+              <input
+                value={qa}
+                onChange={(e) => setQa(e.target.value)}
+                placeholder="e.g. who logged the most hours this month?"
+                aria-label="Question for the analyst"
+                className="min-w-0 flex-1 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <button
+                disabled={qaBusy || !qa}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {qaBusy ? "Asking…" : "Ask"}
+              </button>
+            </form>
+            {qaErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {qaErr}
+              </p>
+            )}
+            {qaAns && (
+              <div className="mt-3 space-y-2" role="status">
+                <p className="text-sm text-text">{qaAns.narrative}</p>
+                <p className="text-xs text-muted">
+                  {qaAns.query} · {qaAns.cost_cents}¢
+                </p>
+                {qaAns.rows.length > 0 && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="text-muted">
+                          {qaAns.columns.map((c) => (
+                            <th key={c} className="px-2 py-1 font-medium">{c}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {qaAns.rows.slice(0, 10).map((row, i) => (
+                          <tr key={i} className="border-t border-border">
+                            {qaAns.columns.map((c) => (
+                              <td key={c} className="px-2 py-1 text-text">{String(row[c])}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
         {isManager && signals !== null && signals.length > 0 && (
           <section aria-label="Signals" className="rounded-[10px] border border-border bg-surface p-4">
             <h2 className="text-sm font-semibold text-text">Signals</h2>

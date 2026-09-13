@@ -110,6 +110,7 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("GET /v1/agents/migrations/{id}", authed(s.getMigration))
 	mux.Handle("POST /v1/agents/migrations/{id}/approve", authed(s.migrationApprove))
 	mux.Handle("DELETE /v1/agents/migrations/{id}", authed(s.deleteMigration))
+	mux.Handle("POST /v1/agents/analyst/query", authed(s.analystQuery))
 	mux.Handle("GET /v1/agents/runs", authed(s.listAgentRuns))
 	mux.Handle("GET /v1/agents/status", authed(s.getAgentsStatus))
 	mux.Handle("PUT /v1/agents/status", authed(s.putAgentsStatus))

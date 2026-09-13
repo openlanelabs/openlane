@@ -3659,6 +3659,60 @@ paths:
                       quarantined: {type: integer}
         "403": {description: Manager role required}
         "404": {description: Not found or not in draft}
+  /agents/analyst/query:
+    post:
+      summary: Analyst — NL question to curated query + why-narrative (P2 §15.6)
+      description: >
+        The LLM never writes SQL: it picks ONE query from a fixed
+        catalog (revenue_by_customer, hours_by_person, margin_by_project,
+        overdue_tasks, approvals_pending) and fills typed slots. Slots
+        are validated server-side (window_days 1-3650; uuids re-scoped
+        by workspace RLS inside the tx), then OpenLane executes its own
+        curated SQL and a cheap-model narrates the rows (numbers must
+        appear verbatim in the rows). Unknown intent returns 400 with
+        the catalog as a hint. Metered to agent_runs (agent=analyst);
+        the pick + narration costs are both counted.
+      operationId: analystQuery
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: {type: string, maxLength: 500}
+      responses:
+        "200":
+          description: Answer — rows + narrative
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: {type: string}
+                  params: {type: object}
+                  columns:
+                    type: array
+                    items: {type: string}
+                  rows:
+                    type: array
+                    items: {type: object}
+                  narrative: {type: string}
+                  model: {type: string}
+                  cost_cents: {type: integer}
+        "400":
+          description: "unknown intent (body carries query:null + hint), no llm configured, or invalid slot"
+        "403": {description: Manager role required}
+        "502": {description: LLM provider failed}
+        "503": {description: Agents disabled (kill switch)}
   /agents/doc/draft:
     post:
       summary: Doc Agent — draft a cited SOW/BRD from sources + template (P2 §15.1)
