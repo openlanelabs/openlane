@@ -47,13 +47,14 @@ type portalTaskOut struct {
 }
 
 type portalSessionOut struct {
-	WorkspaceID  string    `json:"-"`
-	ProjectID    string    `json:"project_id"`
-	ProjectName  string    `json:"project_name"`
-	CustomerName string    `json:"customer_name"`
-	ContactID    string    `json:"contact_id"`
-	ContactName  string    `json:"contact_name"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	WorkspaceID  string          `json:"-"`
+	ProjectID    string          `json:"project_id"`
+	ProjectName  string          `json:"project_name"`
+	CustomerName string          `json:"customer_name"`
+	ContactID    string          `json:"contact_id"`
+	ContactName  string          `json:"contact_name"`
+	ExpiresAt    time.Time       `json:"expires_at"`
+	Theme        json.RawMessage `json:"theme,omitempty"` // §499 white-label
 }
 
 func scanLink(scan func(...any) error) (portalLinkOut, error) {
@@ -248,6 +249,9 @@ func (s *Server) getPortalSession(ctx context.Context, tx pgx.Tx, w http.Respons
 	if _, err := tx.Exec(ctx, `SELECT portal_link_touch($1)`, hashToken(r.PathValue("token"))); err != nil {
 		return http.StatusInternalServerError, errQuiet
 	}
+	// §499: attach the workspace's white-label theme (SECURITY DEFINER —
+	// portal ctx has no workspace id; omitted when never themed).
+	out.Theme = themeForSession(ctx, tx, out.WorkspaceID)
 	if err := tx.Commit(ctx); err != nil {
 		return http.StatusInternalServerError, errQuiet
 	}
