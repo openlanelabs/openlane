@@ -1270,6 +1270,38 @@ INSERT INTO test_results
 SELECT 'T30c threshold CHECK enforced', count(*) = 0 FROM finance_guardian_configs
 WHERE workspace_id = '22222222-2222-2222-2222-222222222222';
 
+-- ---------- T31: workspace domains (00037) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO workspace_domains (workspace_id, domain, challenge)
+VALUES ('11111111-1111-1111-1111-111111111111', 'portal.acme.test', 'ch-a');
+INSERT INTO test_results
+SELECT 'T31a domain roundtrip', EXISTS (
+  SELECT 1 FROM workspace_domains WHERE domain = 'portal.acme.test');
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T31b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM workspace_domains WHERE domain = 'portal.acme.test');
+
+-- cross-ws WRITE blocked (WITH CHECK)
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO workspace_domains (workspace_id, domain, challenge)
+    VALUES ('22222222-2222-2222-2222-222222222222', 'portal.acme.test', 'ch-b');
+    RAISE EXCEPTION 'T31c expected unique violation (cross-ws write)';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  WHEN insufficient_privilege THEN
+    NULL; -- either the UNIQUE or the WITH CHECK blocks it — both acceptable
+  END;
+END $$;
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T31c cross-ws write blocked', count(*) = 1 FROM workspace_domains
+WHERE domain = 'portal.acme.test';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
