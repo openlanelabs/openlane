@@ -66,6 +66,45 @@ export default function AgentsPage() {
     if (res.ok) setMigrList(await res.json());
   };
 
+  // Finance Guardian state (§15.5)
+  const [fgCfg, setFgCfg] = useState<{ margin_warn_pct: number; margin_red_pct: number; min_billed: number; enabled: boolean } | null>(null);
+  const [fgFlags, setFgFlags] = useState<
+    | { enabled: boolean; flags: { project_id: string; name: string; billed: number; cost: number; margin_pct: number | null; severity: string; threshold: number; suggestion: string }[] }
+    | null
+  >(null);
+  const [fgWarn, setFgWarn] = useState("");
+  const [fgRed, setFgRed] = useState("");
+  const [fgMsg, setFgMsg] = useState("");
+
+  const loadFinance = async () => {
+    const [cRes, gRes] = await Promise.all([
+      api("/api/agents/finance/config"),
+      api("/api/agents/finance/guardian"),
+    ]);
+    if (cRes.ok) setFgCfg(await cRes.json());
+    if (gRes.ok) setFgFlags(await gRes.json());
+  };
+
+  const saveFinance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFgMsg("");
+    const body: Record<string, unknown> = {};
+    if (fgWarn !== "") body.margin_warn_pct = Number(fgWarn);
+    if (fgRed !== "") body.margin_red_pct = Number(fgRed);
+    const res = await api("/api/agents/finance/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      setFgCfg(await res.json());
+      setFgMsg("Thresholds saved.");
+      loadFinance();
+    } else {
+      const p = await res.json().catch(() => null);
+      setFgMsg(p?.title ?? "Save failed");
+    }
+  };
+
   const runSuggest = async (e: React.FormEvent) => {
     e.preventDefault();
     setMigrBusy(true);
@@ -144,6 +183,7 @@ export default function AgentsPage() {
           }
         }
         loadMigrList();
+        loadFinance();
       }
     })();
   }, [router]);
@@ -452,6 +492,70 @@ export default function AgentsPage() {
                 </li>
               ))}
             </ul>
+          )}
+        </section>
+
+        <section aria-label="Finance Guardian" className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-text">Finance Guardian</p>
+              <p className="text-xs text-muted">
+                Margin thresholds — it flags projects drifting underwater, it never touches money without you (§15.5).
+              </p>
+            </div>
+            {fgCfg && (
+              <span className={`rounded-full px-2 py-0.5 text-xs ${fgCfg.enabled ? "bg-success/10 text-success" : "bg-warn/10 text-warn"}`}>
+                {fgCfg.enabled ? `warn ${fgCfg.margin_warn_pct}% / red ${fgCfg.margin_red_pct}%` : "disabled"}
+              </span>
+            )}
+          </div>
+          {fgFlags && fgFlags.flags.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {fgFlags.flags.map((f) => (
+                <li key={f.project_id} className="rounded-[10px] border border-border bg-bg px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-text">
+                      {f.name}{" "}
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${f.severity === "red" ? "bg-danger/10 text-danger" : "bg-warn/10 text-warn"}`}>
+                        {f.severity} · {f.margin_pct}% margin
+                      </span>
+                    </p>
+                    <span className="text-xs text-muted">billed {f.billed} / cost {f.cost}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{f.suggestion}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+          {fgFlags && fgFlags.flags.length === 0 && fgCfg?.enabled && (
+            <p className="mt-2 text-xs text-success">No projects under the thresholds.</p>
+          )}
+          {isAdmin && fgCfg && (
+            <form onSubmit={saveFinance} className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                value={fgWarn}
+                onChange={(e) => setFgWarn(e.target.value)}
+                placeholder={`warn % (now ${fgCfg.margin_warn_pct})`}
+                aria-label="Warn threshold percent"
+                inputMode="numeric"
+                className="w-40 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <input
+                value={fgRed}
+                onChange={(e) => setFgRed(e.target.value)}
+                placeholder={`red % (now ${fgCfg.margin_red_pct})`}
+                aria-label="Red threshold percent"
+                inputMode="numeric"
+                className="w-40 rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text placeholder:text-muted"
+              />
+              <button
+                disabled={fgWarn === "" && fgRed === ""}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                Save thresholds
+              </button>
+              {fgMsg && <span className="text-xs text-muted">{fgMsg}</span>}
+            </form>
           )}
         </section>
       </div>

@@ -1241,6 +1241,35 @@ INSERT INTO test_results
 SELECT 'T29c draft default status', status = 'draft'
 FROM config_sheets WHERE sheet->>'customer_goals' = 'g';
 
+-- ---------- T30: finance guardian configs (00036) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO finance_guardian_configs (workspace_id, margin_warn_pct, margin_red_pct)
+VALUES ('11111111-1111-1111-1111-111111111111', 35, 25);
+INSERT INTO test_results
+SELECT 'T30a config roundtrip', EXISTS (
+  SELECT 1 FROM finance_guardian_configs WHERE margin_warn_pct = 35);
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T30b cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM finance_guardian_configs WHERE margin_warn_pct = 35);
+
+-- defaults apply when no row: CHECK bounds enforced on insert
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO finance_guardian_configs (workspace_id, margin_red_pct)
+    VALUES ('22222222-2222-2222-2222-222222222222', 200);
+    RAISE EXCEPTION 'T30c expected check violation';
+  EXCEPTION WHEN check_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T30c threshold CHECK enforced', count(*) = 0 FROM finance_guardian_configs
+WHERE workspace_id = '22222222-2222-2222-2222-222222222222';
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;
