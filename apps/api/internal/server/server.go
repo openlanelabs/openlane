@@ -116,6 +116,7 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.Handle("GET /v1/agents/finance/guardian", authed(s.financeGuardian))
 	mux.Handle("PUT /v1/agents/finance/config", authed(s.putFinanceConfig))
 	mux.Handle("GET /v1/agents/finance/config", authed(s.getFinanceConfig))
+	mux.Handle("POST /v1/agents/assistant/deck", authed(s.assistantDeck))
 	mux.Handle("GET /v1/agents/runs", authed(s.listAgentRuns))
 	mux.Handle("GET /v1/agents/status", authed(s.getAgentsStatus))
 	mux.Handle("PUT /v1/agents/status", authed(s.putAgentsStatus))

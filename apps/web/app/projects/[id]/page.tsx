@@ -131,6 +131,32 @@ export default function ProjectDetail() {
     }
   };
 
+  // Assistant (§15.6) — QBR/steering deck state
+  const [asKind, setAsKind] = useState<"qbr" | "steering">("qbr");
+  const [asBusy, setAsBusy] = useState(false);
+  const [asErr, setAsErr] = useState("");
+  const [asDeck, setAsDeck] = useState<
+    | { doc_id: string; uncited: { index: number; text: string }[]; grounding: { project: string; billed: number; cost: number; margin_pct: number | null; overdue_tasks: number; open_tasks: number }; model: string; cost_cents: number }
+    | null
+  >(null);
+
+  const genDeck = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAsBusy(true);
+    setAsErr("");
+    setAsDeck(null);
+    const res = await api(`/api/agents/assistant/deck`, {
+      method: "POST",
+      body: JSON.stringify({ project_id: id, kind: asKind }),
+    });
+    setAsBusy(false);
+    if (res.ok) setAsDeck(await res.json());
+    else {
+      const p = await res.json().catch(() => null);
+      setAsErr(p?.title ?? "Deck generation failed");
+    }
+  };
+
   const approveSheet = async () => {
     if (!wfSheet) return;
     setWfBusy(true);
@@ -751,6 +777,59 @@ export default function ProjectDetail() {
                 )}
                 <p className="text-xs text-muted">{wfSheet.model} · {wfSheet.cost_cents}¢ — nothing is created until you approve.</p>
                 {wfDone && <p className="text-sm text-success">{wfDone}</p>}
+              </div>
+            )}
+          </section>
+        )}
+
+        {me && ["owner", "admin", "manager"].includes(me.role) && (
+          <section aria-label="Assistant" className="rounded-[10px] border border-border bg-surface p-4">
+            <h2 className="text-sm font-semibold text-text">Assistant</h2>
+            <p className="mt-1 text-xs text-muted">
+              Preps the QBR/steering deck + talk track from this project's real numbers (§15.6) — margins, burn, tasks, signals. Draft saved to Docs below; you publish.
+            </p>
+            <form onSubmit={genDeck} className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                value={asKind}
+                onChange={(e) => setAsKind(e.target.value as "qbr" | "steering")}
+                aria-label="Deck kind"
+                className="rounded-[10px] border border-border bg-bg px-3 py-2 text-sm text-text"
+              >
+                <option value="qbr">QBR</option>
+                <option value="steering">Steering</option>
+              </select>
+              <button
+                disabled={asBusy}
+                className="rounded-[10px] bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-50"
+              >
+                {asBusy ? "Drafting…" : "Draft deck"}
+              </button>
+            </form>
+            {asErr && (
+              <p className="mt-2 text-sm text-danger" role="alert">
+                {asErr}
+              </p>
+            )}
+            {asDeck && (
+              <div className="mt-3 space-y-2 rounded-[10px] border border-border bg-bg p-3" role="status">
+                <p className="text-sm text-success">
+                  Deck saved to Docs · {asDeck.model} · {asDeck.cost_cents}¢
+                </p>
+                <p className="text-xs text-muted">
+                  grounded in: billed {asDeck.grounding.billed} · cost {asDeck.grounding.cost} · margin {asDeck.grounding.margin_pct ?? "—"}% · {asDeck.grounding.open_tasks} open / {asDeck.grounding.overdue_tasks} overdue
+                </p>
+                {asDeck.uncited.length > 0 && (
+                  <div className="rounded-[10px] border border-warn/40 bg-warn/10 p-2">
+                    <p className="text-xs font-semibold text-warn">
+                      ⚠ {asDeck.uncited.length} uncited paragraph{asDeck.uncited.length === 1 ? "" : "s"} — check before the call:
+                    </p>
+                    <ul className="mt-1 list-disc pl-4 text-xs text-text">
+                      {asDeck.uncited.map((u) => (
+                        <li key={u.index}>{u.text}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </section>
