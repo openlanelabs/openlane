@@ -3659,6 +3659,110 @@ paths:
                       quarantined: {type: integer}
         "403": {description: Manager role required}
         "404": {description: Not found or not in draft}
+  /agents/config/sheet:
+    post:
+      summary: Workforce/Config Agent — order form to setup sheet (P2 §15.3)
+      description: >
+        Reads a published form's responses (the customer's order form),
+        asks the smart model for a setup sheet (customer goals, 3-8 tasks
+        with owner_type/due_days/visibility, optional budget_hours), and
+        VALIDATES the proposal in code — invalid tasks (empty titles,
+        out-of-range days) are stripped, budgets clamped to 0-10000.
+        The sheet is stored draft; nothing executes until a manager
+        approves (agents propose, humans commit). Metered to
+        agent_runs (agent=workforce).
+      operationId: configSheet
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, form_response_id]
+              properties:
+                project_id: {type: string, format: uuid}
+                form_response_id: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Draft setup sheet (validated)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config_sheet_id: {type: string, format: uuid}
+                  sheet:
+                    type: object
+                    properties:
+                      customer_goals: {type: string}
+                      tasks:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            title: {type: string}
+                            owner_type: {type: string, enum: [internal, customer]}
+                            due_days: {type: integer, minimum: 1, maximum: 365}
+                            customer_visible: {type: boolean}
+                      budget_hours:
+                        type: [integer, "null"]
+                        minimum: 0
+                        maximum: 10000
+                      notes: {type: string}
+                  model: {type: string}
+                  cost_cents: {type: integer}
+        "400": {description: "validation failed, or no llm configured"}
+        "403": {description: Manager role required}
+        "404": {description: Project or form response not found}
+        "502": {description: LLM provider failed}
+        "503": {description: Agents disabled (kill switch)}
+  /agents/config/{id}/approve:
+    post:
+      summary: Approve + execute a setup sheet (deterministic, no LLM)
+      description: >
+        Manager approves the draft sheet; code creates the tasks and
+        sets the project budget in ONE transaction. State machine:
+        draft -> executed (re-approve 404). The execution is audited
+        (actor=user, source=agent) and the created row ids are stored
+        as executed_refs.
+      operationId: configApprove
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: Executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: {type: string, format: uuid}
+                  status: {type: string, example: executed}
+                  refs:
+                    type: object
+                    properties:
+                      task_ids:
+                        type: array
+                        items: {type: string, format: uuid}
+                      budget_hours_set: {type: boolean}
+        "403": {description: Manager role required}
+        "404": {description: Sheet not found or already executed}
   /agents/analyst/query:
     post:
       summary: Analyst — NL question to curated query + why-narrative (P2 §15.6)
