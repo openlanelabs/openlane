@@ -78,6 +78,8 @@ func New(ctx context.Context, dsn, staffToken string) (http.Handler, *pgxpool.Po
 	mux.HandleFunc("POST /v1/auth/logout", s.logout)
 	mux.Handle("GET /v1/auth/me", authed(s.me))
 	mux.Handle("GET /v1/auth/workspaces", authed(s.myWorkspaces))
+	mux.Handle("GET /v1/auth/sessions", authed(s.listSessions))
+	mux.Handle("DELETE /v1/auth/sessions/{id}", authed(s.revokeSession))
 
 	// staff routes: JWT (static token only when OPENLANE_ALLOW_STATIC_TOKEN=1)
 	mux.Handle("POST /v1/portal-links", authed(s.createPortalLink))

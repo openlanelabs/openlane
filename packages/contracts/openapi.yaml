@@ -1488,6 +1488,59 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+  /auth/sessions:
+    get:
+      summary: Device list — active sessions with UA/IP (§406)
+      operationId: listSessions
+      description: |
+        The user's own active sessions in the current workspace,
+        newest-used first. current flags the caller's own row via
+        the sid claim. Legacy rows render 'Unknown device
+        (pre-3.4)' honestly.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string, format: uuid}
+                        user_agent: {type: string}
+                        created_ip: {type: string}
+                        created_at: {type: string, format: date-time}
+                        last_used_at: {type: string, format: date-time}
+                        expires_at: {type: string, format: date-time}
+                        current: {type: boolean}
+        "403": {$ref: "#/components/responses/Forbidden"}
+
+  /auth/sessions/{id}:
+    delete:
+      summary: Instant revoke a session (§406, §350 token-leak path)
+      operationId: revokeSession
+      description: |
+        Revokes any of the user's own sessions by id — the stolen
+        device kill switch. Idempotent; revoking the current session
+        is allowed (logout semantics: next refresh 401s). 404 —
+        without oracle — for ids that aren't the user's.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Revoked (or already revoked)}
+        "404": {$ref: "#/components/responses/NotFound"}
+
   /auth/workspaces:
     get:
       summary: List workspaces the user belongs to (bearer auth)
