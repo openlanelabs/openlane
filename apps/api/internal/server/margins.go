@@ -3,7 +3,10 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -206,4 +209,177 @@ func (s *Server) listMargins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// marginWhy: GET /v1/margins/{id}/why — the §324 variance explainer in
+// plain English. Deterministic decomposition (no LLM: the §528
+// 'plain English' is a sentence assembled from real arithmetic — the
+// truth must be numbers, not prose from a model). Drivers ordered by
+// |delta|; margin recomputed via the canonical projectMargin so the
+// why can never drift from /margins.
+type whyDriver struct {
+	Kind      string  `json:"kind"` // budget_overrun | cost_concentration | unpriced_time
+	Label     string  `json:"label"`
+	DeltaCost float64 `json:"delta_cost"` // estimated cost impact (0 for informational)
+	Detail    string  `json:"detail"`
+}
+
+func (s *Server) marginWhy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if !s.isManager(ctx) {
+		problem(w, http.StatusForbidden, "manager role required")
+		return
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.workspace_id', $1, true), set_config('app.portal_token_hash', '', true), set_config('app.user_id', $2, true)",
+		workspaceFromCtx(ctx), userFromCtx(ctx)); err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	pid := r.PathValue("id")
+	m, err := projectMargin(ctx, tx, pid)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			problem(w, http.StatusNotFound, "project not found")
+			return
+		}
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// per-person cost rows for THIS project (approved+invoiced only —
+	// the billable states, same as projectMargin)
+	rows, err := tx.Query(ctx, `
+		SELECT COALESCE(pe.name, 'Unlinked user'), COALESCE(pe.cost_rate,0), sum(te.minutes),
+		       count(*) FILTER (WHERE pe.id IS NULL)
+		FROM time_entries te
+		JOIN memberships m ON m.user_id = te.user_id AND m.workspace_id = te.workspace_id
+		LEFT JOIN people pe ON pe.user_id = te.user_id AND pe.workspace_id = te.workspace_id AND pe.deleted_at IS NULL
+		WHERE te.project_id = $1::uuid AND te.deleted_at IS NULL
+		  AND te.status IN ('approved','invoiced')
+		GROUP BY pe.id, pe.name, pe.cost_rate
+		ORDER BY sum(te.minutes) DESC`, pid)
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	type personCost struct {
+		Name     string
+		CostRate float64
+		Minutes  float64
+		Unlinked bool
+	}
+	people := []personCost{}
+	for rows.Next() {
+		var p personCost
+		var cr float64
+		var mins float64
+		var unlinked int
+		if err := rows.Scan(&p.Name, &cr, &mins, &unlinked); err != nil {
+			rows.Close()
+			problem(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		p.CostRate, p.Minutes, p.Unlinked = cr, mins, unlinked > 0
+		people = append(people, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// blended cost rate (per hour) for this project
+	var blended float64
+	if m.LoggableHrs > 0 {
+		blended = m.Cost / m.LoggableHrs
+	}
+
+	drivers := []whyDriver{}
+	var budgetHours float64
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(budget_hours,0) FROM projects WHERE id = $1::uuid`, pid).
+		Scan(&budgetHours)
+
+	// 1. budget overrun: hours over budget × blended rate
+	if budgetHours > 0 && m.LoggableHrs > budgetHours {
+		overHrs := m.LoggableHrs - budgetHours
+		delta := overHrs * blended
+		drivers = append(drivers, whyDriver{
+			Kind:      "budget_overrun",
+			Label:     fmt.Sprintf("%.0fh over the %.0fh budget", overHrs, budgetHours),
+			DeltaCost: mathRound2(delta),
+			Detail: fmt.Sprintf("logged %.1fh vs %.0fh planned × $%.2f/h blended cost",
+				m.LoggableHrs, budgetHours, blended),
+		})
+	}
+
+	// 2. cost concentration: anyone ≥25% above blended rate
+	for _, p := range people {
+		if p.Unlinked || blended <= 0 || p.CostRate <= 0 || p.CostRate < blended*1.25 {
+			continue
+		}
+		premium := p.CostRate - blended
+		drivers = append(drivers, whyDriver{
+			Kind:      "cost_concentration",
+			Label:     fmt.Sprintf("%s at $%.2f/h", p.Name, p.CostRate),
+			DeltaCost: mathRound2(premium * p.Minutes / 60),
+			Detail: fmt.Sprintf("%.0f%% above the $%.2f/h blended rate on %.1fh",
+				(p.CostRate/blended-1)*100, blended, p.Minutes/60),
+		})
+	}
+
+	// 3. unpriced time: margin uncertainty from unlinked users
+	if m.Unpriced > 0 {
+		drivers = append(drivers, whyDriver{
+			Kind:      "unpriced_time",
+			Label:     fmt.Sprintf("%dh unpriced time", int(mathRound2(float64(m.Unpriced)/60))),
+			DeltaCost: 0,
+			Detail:    "logged by users with no person link — cost is understated",
+		})
+	}
+
+	// order by |delta|
+	sort.SliceStable(drivers, func(i, j int) bool {
+		return mathAbs(drivers[i].DeltaCost) > mathAbs(drivers[j].DeltaCost)
+	})
+
+	// sentence: plain-English assembly (§324 style)
+	sentence := "Margin on plan — no adverse drivers."
+	if len(drivers) > 0 {
+		marginPct := 0.0
+		if m.Billed > 0 {
+			marginPct = (m.Billed - m.Cost) / m.Billed * 100
+		}
+		parts := []string{}
+		for _, d := range drivers {
+			if len(parts) >= 2 {
+				break
+			}
+			parts = append(parts, d.Label)
+		}
+		sentence = fmt.Sprintf("Margin at %.0f%% — %s.", marginPct, strings.Join(parts, " and "))
+	}
+
+	_ = tx.Commit(ctx)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"project_id": pid,
+		"margin":     m,
+		"drivers":    drivers,
+		"sentence":   sentence,
+	})
+}
+
+func mathRound2(f float64) float64 { return float64(int(f*100+0.5)) / 100 }
+func mathAbs(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
 }

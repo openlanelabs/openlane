@@ -1177,6 +1177,49 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PortfolioMargins"}
+  /margins/{id}/why:
+    get:
+      summary: Margin variance why — plain-English decomposition (§324)
+      description: >
+        Deterministic drivers (budget overrun, cost concentration,
+        unpriced time) ordered by impact, plus a templated sentence.
+        Margin recomputed via the canonical path — the why can never
+        drift from /margins. Manager role and above; internal only.
+      operationId: marginWhy
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Workspace-Id
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: drivers + sentence
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  project_id: {type: string, format: uuid}
+                  margin: {$ref: "#/components/schemas/Margin"}
+                  drivers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        kind: {type: string, enum: [budget_overrun, cost_concentration, unpriced_time]}
+                        label: {type: string, description: "plain-English, e.g. '14h over the 80h budget'"}
+                        delta_cost: {type: number}
+                        detail: {type: string}
+                  sentence: {type: string}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
   /projects/{id}/tasks:
     get:
       summary: List project tasks (staff — includes internal)
