@@ -52,13 +52,16 @@ type sessionTokens struct {
 	UserID       string `json:"user_id"`
 	WorkspaceID  string `json:"workspace_id"`
 	Role         string `json:"role"`
+	SessionID    string
 }
 
 func issueTokens(userID, workspaceID, role string) (sessionTokens, string, error) {
+	sessID := newUUID()
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":  userID,
 		"ws":   workspaceID,
 		"role": role,
+		"sid":  sessID, // device list: marks the caller's own row
 		"exp":  time.Now().Add(accessTTL).Unix(),
 		"iat":  time.Now().Unix(),
 	}).SignedString(jwtSecret())
@@ -69,7 +72,7 @@ func issueTokens(userID, workspaceID, role string) (sessionTokens, string, error
 	if err != nil {
 		return sessionTokens{}, "", err
 	}
-	family := newUUID()
+	family := sessID // session id doubles as family seed — one identity per row
 	return sessionTokens{
 		AccessToken:  access,
 		RefreshToken: refresh,
@@ -77,6 +80,7 @@ func issueTokens(userID, workspaceID, role string) (sessionTokens, string, error
 		UserID:       userID,
 		WorkspaceID:  workspaceID,
 		Role:         role,
+		SessionID:    sessID,
 	}, family, nil
 }
 
@@ -248,16 +252,16 @@ func (s *Server) consumeMagicLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st, family, err := issueTokens(userID, wsID, role)
+	st, _, err := issueTokens(userID, wsID, role)
 	if err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sessions (user_id, workspace_id, refresh_hash, family_id, expires_at)
-		VALUES ($1, $2, $3, $4, now() + interval '30 days')`,
-		userID, wsID, hashTok(st.RefreshToken), family); err != nil {
-		problem(w, http.StatusInternalServerError, "internal error")
+		INSERT INTO sessions (id, user_id, workspace_id, refresh_hash, family_id, expires_at, user_agent, created_ip)
+		VALUES ($5, $1, $2, $3, $4, now() + interval '30 days', $6, $7)`,
+		userID, wsID, hashTok(st.RefreshToken), st.SessionID, st.SessionID, r.UserAgent(), clientIP(r)); err != nil {
+		problem(w, http.StatusInternalServerError, "internal error: "+err.Error())
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -345,9 +349,9 @@ func (s *Server) refreshSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO sessions (user_id, workspace_id, refresh_hash, family_id, expires_at)
-		VALUES ($1, $2, $3, $4, now() + interval '30 days')`,
-		userID, wsID, hashTok(st.RefreshToken), family); err != nil {
+		INSERT INTO sessions (id, user_id, workspace_id, refresh_hash, family_id, expires_at, user_agent, created_ip)
+		VALUES ($5, $1, $2, $3, $4, now() + interval '30 days', $6, $7)`,
+		userID, wsID, hashTok(st.RefreshToken), family, st.SessionID, r.UserAgent(), clientIP(r)); err != nil {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -467,7 +471,7 @@ func userFromCtx(ctx context.Context) string {
 
 var errBadToken = fmt.Errorf("bad token")
 
-func (s *Server) parseAccess(tokenStr string) (userID, wsID, role string, err error) {
+func (s *Server) parseAccess(tokenStr string) (userID, wsID, role, sid string, err error) {
 	tok, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errBadToken
@@ -475,19 +479,20 @@ func (s *Server) parseAccess(tokenStr string) (userID, wsID, role string, err er
 		return jwtSecret(), nil
 	})
 	if err != nil || !tok.Valid {
-		return "", "", "", errBadToken
+		return "", "", "", "", errBadToken
 	}
 	claims, ok := tok.Claims.(jwt.MapClaims)
 	if !ok {
-		return "", "", "", errBadToken
+		return "", "", "", "", errBadToken
 	}
 	userID, _ = claims["sub"].(string)
 	wsID, _ = claims["ws"].(string)
 	role, _ = claims["role"].(string)
+	sid, _ = claims["sid"].(string)
 	if userID == "" || wsID == "" {
-		return "", "", "", errBadToken
+		return "", "", "", "", errBadToken
 	}
-	return userID, wsID, role, nil
+	return userID, wsID, role, sid, nil
 }
 
 // auth wraps staff handlers: JWT bearer (or static token when
@@ -501,7 +506,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			problem(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		userID, wsID, role := "", "", ""
+		userID, wsID, role, sid := "", "", "", ""
 		if s.staticAllowed() && subtle.ConstantTimeCompare([]byte(got), []byte(s.staffToken)) == 1 && s.staffToken != "" {
 			// CI/e2e static identity: full scope, attributed as system
 			userID, wsID, role = "", r.Header.Get("X-Workspace-Id"), "admin"
@@ -510,7 +515,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		} else {
-			userID, wsID, role, err = s.parseAccess(got)
+			userID, wsID, role, sid, err = s.parseAccess(got)
 			if err != nil {
 				problem(w, http.StatusUnauthorized, "invalid or expired token")
 				return
@@ -520,12 +525,83 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		ctx = context.WithValue(ctx, userKey{}, userID)
 		ctx = context.WithValue(ctx, wsKey{}, wsID)
 		ctx = context.WithValue(ctx, roleKey{}, role)
+		ctx = context.WithValue(ctx, staffSessionKey{}, sid)
 		next(w, r.WithContext(ctx))
 	}
 }
 
 type roleKey struct{}
+type staffSessionKey struct{}
 
 func (s *Server) staticAllowed() bool {
 	return os.Getenv("OPENLANE_ALLOW_STATIC_TOKEN") == "1" && s.staffToken != ""
+}
+
+// listSessions: GET /v1/auth/sessions — the §406 device list.
+// Own sessions in the caller's workspace, current flagged by sid.
+func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, COALESCE(user_agent, 'Unknown device (pre-3.4)'),
+		       COALESCE(created_ip, ''), created_at::text,
+		       COALESCE(last_used_at, created_at)::text, expires_at::text
+		FROM sessions
+		WHERE user_id = $1::uuid AND workspace_id = $2::uuid
+		  AND revoked_at IS NULL AND expires_at > now()
+		ORDER BY COALESCE(last_used_at, created_at) DESC`,
+		userFromCtx(ctx), workspaceFromCtx(ctx))
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+	sid := ctx.Value(staffSessionKey{}).(string)
+	type dev struct {
+		ID         string `json:"id"`
+		UserAgent  string `json:"user_agent"`
+		CreatedIP  string `json:"created_ip,omitempty"`
+		CreatedAt  string `json:"created_at"`
+		LastUsedAt string `json:"last_used_at"`
+		ExpiresAt  string `json:"expires_at"`
+		Current    bool   `json:"current"`
+	}
+	out := []dev{}
+	for rows.Next() {
+		var d dev
+		if err := rows.Scan(&d.ID, &d.UserAgent, &d.CreatedIP, &d.CreatedAt, &d.LastUsedAt, &d.ExpiresAt); err != nil {
+			problem(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		d.Current = d.ID == sid
+		out = append(out, d)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// revokeSession: DELETE /v1/auth/sessions/{id} — instant revoke of
+// any of the user's own sessions (§406 + §350 token-leak path).
+// Revoking the current session = logout (next refresh 401s).
+func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	res, err := s.pool.Exec(ctx, `
+		UPDATE sessions SET revoked_at = now()
+		WHERE id = $1::uuid AND user_id = $2::uuid AND workspace_id = $3::uuid`,
+		r.PathValue("id"), userFromCtx(ctx), workspaceFromCtx(ctx))
+	if err != nil {
+		problem(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if res.RowsAffected() == 0 {
+		// already-revoked or expired rows are NOT re-revoked (WHERE
+		// misses them) — distinguish not-mine from already-gone
+		var exists bool
+		_ = s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sessions WHERE id = $1::uuid
+			AND user_id = $2::uuid AND workspace_id = $3::uuid)`,
+			r.PathValue("id"), userFromCtx(ctx), workspaceFromCtx(ctx)).Scan(&exists)
+		if !exists {
+			problem(w, http.StatusNotFound, "session not found")
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
