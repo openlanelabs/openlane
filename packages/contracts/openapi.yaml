@@ -2759,6 +2759,152 @@ paths:
                   allowed_domains: {type: array, items: {type: string}}
                   enforce: {type: boolean}
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /scim:
+    put:
+      summary: Configure SCIM provisioning token (admin)
+      operationId: putSCIMConfig
+      description: |
+        Generates a random bearer token (shown once, sealed at rest)
+        that maps SCIM callers to this workspace. clear:true removes
+        SCIM access entirely. The IdP side: base URL /scim/v2 with
+        Bearer auth — Users create/filter/patch(active)/delete, all
+        soft-delete semantics (§406 Phase2).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clear: {type: boolean}
+      responses:
+        "200":
+          description: Token (shown once) or cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: {type: [string, "null"]}
+
+  /scim/v2/Users:
+    post:
+      summary: SCIM provision user (IdP bearer)
+      operationId: scimCreate
+      description: |
+        Upsert-by-email: creates users row + viewer membership (§424
+        JIT parity) or ensures/reactivates membership for an existing
+        user. Duplicate → 409 with the existing SCIM id (IdP
+        reconciliation contract).
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema: {$ref: "#/components/schemas/ScimUser"}
+      responses:
+        "201":
+          description: Provisioned
+          content:
+            application/scim+json:
+              schema: {$ref: "#/components/schemas/ScimUser"}
+        "409":
+          description: Existing user (id returned)
+          content:
+            application/scim+json:
+              schema: {$ref: "#/components/schemas/ScimUser"}
+    get:
+      summary: SCIM filter lookup (IdP bearer)
+      operationId: scimGetUser
+      description: |
+        The IdP reconciliation query. Only `userName eq "email"`
+        filters supported v1 (startIndex pagination is the noted
+        follow-up).
+      security:
+        - scimBearer: []
+      parameters:
+        - name: filter
+          in: query
+          required: true
+          schema: {type: string}
+          example: 'userName eq "asha@acme.test"'
+      responses:
+        "200":
+          description: Found
+          content:
+            application/scim+json:
+              schema: {$ref: "#/components/schemas/ScimUser"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /scim/v2/Users/{id}:
+    patch:
+      summary: SCIM activate/deactivate (IdP bearer)
+      operationId: scimPatch
+      description: |
+        The lifecycle verb. replace active:false stamps
+        memberships.deactivated_at — access revoked immediately
+        (magic-link, refresh, /me all reject deactivated members).
+        active:true restores. Only replace-active supported.
+      security:
+        - scimBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              type: object
+              properties:
+                Operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      op: {type: string, enum: [replace]}
+                      path: {type: string, enum: [active]}
+                      value: {type: boolean}
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/scim+json:
+              schema: {$ref: "#/components/schemas/ScimUser"}
+    delete:
+      summary: SCIM delete user (soft) (IdP bearer)
+      operationId: scimDelete
+      description: |
+        RFC 7644 soft-delete: deactivates membership. Users are never
+        hard-deleted (audit trail).
+      security:
+        - scimBearer: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "204": {description: Deactivated}
+
+  /scim/v2/ServiceProviderConfig:
+    get:
+      summary: SCIM capabilities (public)
+      operationId: scimSPConfig
+      description: Honest declaration of what this SCIM provider supports.
+      responses:
+        "200":
+          description: Capabilities
+          content:
+            application/scim+json:
+              schema: {type: object}
+
+
   /sso/authorize:
     get:
       summary: Start the OIDC flow (unauthenticated)
@@ -5251,6 +5397,25 @@ components:
         billed: {type: number}
         margin: {type: [number, "null"], description: "null when billed = 0"}
         unpriced: {type: integer, description: Minutes by authors with no person link}
+    ScimUser:
+      type: object
+      description: RFC 7643 core User (the fields IdPs sync)
+      properties:
+        schemas: {type: array, items: {type: string}}
+        id: {type: string, format: uuid}
+        userName: {type: string, description: email}
+        active: {type: boolean}
+        name:
+          type: object
+          properties:
+            givenName: {type: string}
+            familyName: {type: string}
+        meta:
+          type: object
+          properties:
+            resourceType: {type: string}
+            created: {type: string, format: date-time}
+            lastModified: {type: string, format: date-time}
     PortfolioMargins:
       type: object
       properties:
@@ -5433,6 +5598,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    scimBearer:
+      type: http
+      scheme: bearer
+      description: Per-workspace SCIM token set via PUT /scim
     portalToken:
       type: apiKey
       in: query
