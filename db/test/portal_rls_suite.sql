@@ -1326,6 +1326,40 @@ SELECT 'T32c theme_for helper resolves', workspace_theme_for('11111111-1111-1111
 INSERT INTO test_results
 SELECT 'T32d host fn unverified null', (workspace_for_host('never-claimed.test'))::text = 'null';
 
+-- ---------- T33: scim configs (00039) ----------
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO scim_configs (workspace_id, token_enc)
+VALUES ('11111111-1111-1111-1111-111111111111', '\x00');
+INSERT INTO test_results
+SELECT 'T33a config roundtrip', EXISTS (
+  SELECT 1 FROM scim_configs WHERE workspace_id = '11111111-1111-1111-1111-111111111111');
+
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO scim_configs (workspace_id, token_enc)
+    VALUES ('11111111-1111-1111-1111-111111111111', '\x01');
+    RAISE EXCEPTION 'T33b expected unique violation';
+  EXCEPTION WHEN unique_violation THEN
+    NULL;
+  END;
+END $$;
+INSERT INTO test_results
+SELECT 'T33b one token per workspace', count(*) = 1 FROM scim_configs
+WHERE workspace_id = '11111111-1111-1111-1111-111111111111';
+
+SELECT set_config('app.workspace_id', '22222222-2222-2222-2222-222222222222', false);
+INSERT INTO test_results
+SELECT 'T33c cross-ws read blocked', NOT EXISTS (
+  SELECT 1 FROM scim_configs WHERE workspace_id = '11111111-1111-1111-1111-111111111111');
+
+-- deactivation stamps survive RLS roundtrip (column exists + default null)
+SELECT set_config('app.workspace_id', '11111111-1111-1111-1111-111111111111', false);
+INSERT INTO test_results
+SELECT 'T33d deactivated_at column live',
+  EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'memberships' AND column_name = 'deactivated_at');
+
 -- ---------- verdict ----------
 DO $$
 DECLARE failed int; r record;

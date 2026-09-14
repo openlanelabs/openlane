@@ -161,7 +161,7 @@ func (s *Server) requestMagicLink(w http.ResponseWriter, r *http.Request) {
 		isMember := tx.QueryRow(ctx, `
 			SELECT m.user_id, m.role FROM memberships m
 			JOIN users u ON u.id = m.user_id
-			WHERE lower(u.email) = lower($1) AND m.workspace_id = $2`, req.Email, wsID).Scan(&userID, &role) == nil
+			WHERE lower(u.email) = lower($1) AND m.workspace_id = $2 AND m.deactivated_at IS NULL`, req.Email, wsID).Scan(&userID, &role) == nil
 
 		tok, err2 := randToken()
 		if err2 == nil {
@@ -237,6 +237,7 @@ func (s *Server) consumeMagicLink(w http.ResponseWriter, r *http.Request) {
 		WHERE lt.token_hash = $1
 		  AND m.workspace_id = lt.workspace_id AND m.user_id = u.id
 		  AND lower(u.email) = lower(lt.email)
+		  AND m.deactivated_at IS NULL
 		RETURNING m.user_id, m.role`, hashTok(tok)).Scan(&userID, &role)
 	if err == pgx.ErrNoRows {
 		problem(w, http.StatusUnauthorized, "invalid or expired token")
@@ -328,7 +329,7 @@ func (s *Server) refreshSession(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := tx.QueryRow(ctx, `SELECT role FROM memberships WHERE user_id = $1 AND workspace_id = $2`, userID, wsID).Scan(&role); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT role FROM memberships WHERE user_id = $1 AND workspace_id = $2 AND deactivated_at IS NULL`, userID, wsID).Scan(&role); err != nil {
 		problem(w, http.StatusUnauthorized, "membership revoked")
 		return
 	}
@@ -418,7 +419,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(ctx, `
 		SELECT u.id, u.email, u.display_name, w.id, w.name, m.role
 		FROM memberships m JOIN users u ON u.id = m.user_id JOIN workspaces w ON w.id = m.workspace_id
-		WHERE m.user_id = $1 AND m.workspace_id = $2`, uid, ws).
+		WHERE m.user_id = $1 AND m.workspace_id = $2 AND m.deactivated_at IS NULL`, uid, ws).
 		Scan(&out.UserID, &out.Email, &out.DisplayName, &out.WorkspaceID, &out.WorkspaceName, &out.Role)
 	if err != nil {
 		problem(w, http.StatusUnauthorized, "no membership")
