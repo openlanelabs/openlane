@@ -168,7 +168,7 @@ func TestAllocationsAndUtilizationMath(t *testing.T) {
 	if u.LoggedMinutes != 120 {
 		t.Fatalf("logged = %d", u.LoggedMinutes)
 	}
-	if u.Weeks < 1 || u.Weeks > 1.2 { // 7 days incl. ≥5 workdays
+	if u.Weeks < 1 || u.Weeks > 1.4 { // 9-day window holds 5–7 workdays depending on today's weekday
 		t.Fatalf("weeks = %f", u.Weeks)
 	}
 	if u.Utilization == nil || *u.Utilization <= 0 || *u.Utilization > 1 {

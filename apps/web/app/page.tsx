@@ -41,6 +41,11 @@ type PortfolioMargins = {
   };
 };
 
+type MarginWhy = {
+  sentence: string;
+  drivers: { kind: string; label: string; delta_cost: number; detail: string }[];
+};
+
 function healthDot(h: string) {
   const c = h === "green" ? "bg-success" : h === "amber" ? "bg-warn" : h === "red" ? "bg-danger" : "bg-muted";
   return <span className={`inline-block h-2 w-2 rounded-full ${c}`} aria-label={`health: ${h}`} />;
@@ -56,6 +61,7 @@ export default function Dashboard() {
   const [rejecting, setRejecting] = useState<string | null>(null); // entry id with open reason box
   const [reason, setReason] = useState("");
   const [margins, setMargins] = useState<PortfolioMargins | null>(null);
+  const [why, setWhy] = useState<Record<string, MarginWhy | "error">>({});
   const [signals, setSignals] = useState<
     { kind: string; severity: string; project_id: string; project: string; title: string; risk_score?: number }[] | null
   >(null);
@@ -66,6 +72,29 @@ export default function Dashboard() {
     { query: string; columns: string[]; rows: Record<string, string | number | null>[]; narrative: string; cost_cents: number } | null
   >(null);
   const [qaErr, setQaErr] = useState("");
+
+  // §324 margin variance why: expandable plain-English decomposition
+  const toggleWhy = async (pid: string) => {
+    setWhy((prev) => {
+      if (prev[pid]) {
+        const { [pid]: _, ...rest } = prev;
+        return rest;
+      }
+      return prev;
+    });
+    if (why[pid]) return;
+    try {
+      const res = await api(`/margins/${pid}/why`);
+      if (!res.ok) throw new Error("why failed");
+      const data: MarginWhy = await res.json();
+      setWhy((prev) => ({ ...prev, [pid]: data }));
+    } catch {
+      setWhy((prev) => ({ ...prev, [pid]: "error" }));
+    }
+  };
+
+  const projectName = (pid: string) =>
+    projects?.find((p) => p.id === pid)?.name ?? "Project";
 
   const askAnalyst = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -302,6 +331,64 @@ export default function Dashboard() {
                 Margin {margins.totals.margin !== null ? `${Math.round(margins.totals.margin * 100)}%` : "—"}
               </span>
             </div>
+            <ul className="mt-3 divide-y divide-border">
+              {margins.projects.map((p) => {
+                const pid = p.project_id;
+                const w = why[pid];
+                return (
+                  <li key={pid} className="py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <a href={`/projects/${pid}`} className="text-sm text-text hover:underline">
+                        {projectName(pid)}
+                      </a>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted">
+                          {Math.round(p.logged_hours)}h · ${Math.round(p.billed).toLocaleString()}
+                        </span>
+                        <span
+                          className={`text-xs font-medium ${
+                            p.margin !== null && p.margin >= 0.5
+                              ? "text-success"
+                              : p.margin !== null && p.margin >= 0.2
+                                ? "text-warn"
+                                : "text-danger"
+                          }`}
+                        >
+                          {p.margin !== null ? `${Math.round(p.margin * 100)}%` : "—"}
+                        </span>
+                        <button
+                          onClick={() => toggleWhy(pid)}
+                          className="text-xs text-muted underline-offset-2 hover:text-text hover:underline"
+                        >
+                          {w ? "hide why" : "why?"}
+                        </button>
+                      </div>
+                    </div>
+                    {w && (
+                      <div className="mt-1 rounded-[10px] bg-bg p-2">
+                        {w === "error" ? (
+                          <p className="text-xs text-danger">why unavailable</p>
+                        ) : (
+                          <>
+                            <p className="text-xs text-text">{w.sentence}</p>
+                            {w.drivers.length > 0 && (
+                              <ul className="mt-1 space-y-0.5">
+                                {w.drivers.map((d, i) => (
+                                  <li key={i} className="text-xs text-muted">
+                                    · {d.label} — {d.detail}
+                                    {d.delta_cost > 0 && ` (~$${Math.round(d.delta_cost).toLocaleString()} impact)`}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </section>
         )}
 
